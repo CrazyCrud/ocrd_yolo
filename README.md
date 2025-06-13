@@ -3,6 +3,8 @@
 > YOLOv11-based region segmentation for OCR-D
 > You can find the ocrd_detectron2 wrapper here: https://github.com/bertsky/ocrd_detectron2/tree/master
 
+❗ WORK STILL IN PROGRESS
+
 This OCR-D processor uses YOLOv11 models to detect and segment document regions (text blocks, images, tables, etc.) in document images. YOLOv11 provides built-in segmentation masks for all detections.
 
 ## Installation
