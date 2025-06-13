@@ -1,0 +1,22 @@
+# Core OCR-D dependencies
+ocrd>=2.30.0
+click>=7.0
+
+# YOLO and deep learning
+ultralytics>=8.2.0
+torch>=1.9.0
+
+# Image processing
+opencv-python>=4.5.0
+numpy>=1.19.0
+Pillow>=8.0.0
+
+# Geometry operations
+shapely>=1.8.0
+
+# Optional: for development
+# pytest>=6.0
+# pytest-cov
+# black
+# flake8
+# mypy

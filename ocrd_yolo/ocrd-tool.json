@@ -1,0 +1,61 @@
+{
+    "git_url": "https://github.com/CrazyCrud/ocrd_yolo",
+    "dockerhub": "",
+    "version": "0.1.0",
+    "tools": {
+        "ocrd-yolo-segment": {
+            "executable": "ocrd-yolo-segment",
+            "categories": ["Layout analysis"],
+            "steps": ["layout/segmentation/region"],
+            "description": "Detect regions with YOLOv11 models",
+            "input_file_grp_cardinality": 1,
+            "output_file_grp_cardinality": 1,
+            "parameters": {
+                "operation_level": {
+                    "type": "string",
+                    "enum": ["page", "table"],
+                    "default": "page",
+                    "description": "hierarchy level which to predict and assign regions for"
+                },
+                "categories": {
+                    "type": "array",
+                    "required": true,
+                    "description": "maps each region category (position) of the model to a PAGE region type (and @type or @custom if separated by colon), e.g. ['TextRegion:paragraph', 'TextRegion:heading', 'TextRegion:floating', 'TableRegion', 'ImageRegion'] for document layouts; categories with an empty string will be skipped during prediction"
+                },
+                "model_weights": {
+                    "type": "string",
+                    "format": "uri",
+                    "content-type": "application/octet-stream",
+                    "required": true,
+                    "description": "path name of YOLOv11 model weights"
+                },
+                "min_confidence": {
+                    "type": "number",
+                    "format": "float",
+                    "default": 0.5,
+                    "description": "confidence threshold for detections"
+                },
+                "postprocessing": {
+                    "type": "string",
+                    "enum": ["full", "only-nms", "only-morph", "none"],
+                    "default": "full",
+                    "description": "which postprocessing steps to enable: by default, applies a custom non-maximum suppression (to avoid overlaps) and morphological operations (using connected component analysis on the binarized input image to shrink or expand regions)"
+                },
+                "debug_img": {
+                    "type": "string",
+                    "enum": ["none", "visualize"],
+                    "default": "none",
+                    "description": "paint an AlternativeImage which blends the input image and all detected regions"
+                },
+                "device": {
+                    "type": "string",
+                    "default": "cuda",
+                    "description": "select computing device for PyTorch (e.g. cpu or cuda:0); will fall back to CPU if no GPU is available"
+                }
+            },
+            "resources": [
+
+            ]
+        }
+    }
+}

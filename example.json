@@ -1,0 +1,16 @@
+{
+    "model_weights": "path/to/yolov8-seg.pt",
+    "device": "cuda:0",
+    "min_confidence": 0.5,
+    "operation_level": "page",
+    "postprocessing": "full",
+    "debug_img": "none",
+    "categories": [
+        "TextRegion",
+        "ImageRegion",
+        "TableRegion",
+        "GraphicRegion",
+        "SeparatorRegion",
+        "NoiseRegion"
+    ]
+}
