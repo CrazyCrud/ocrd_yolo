@@ -1,0 +1,34 @@
+# Include documentation and metadata
+include README.md
+include LICENSE
+include CHANGELOG.md
+include pyproject.toml
+include setup.cfg
+include requirements*.txt
+include Makefile
+
+# Include the OCR-D tool description
+include ocrd_yolo/ocrd-tool.json
+
+# Include test configuration
+include pytest.ini
+include tox.ini
+include .coveragerc
+
+# Include test assets
+recursive-include tests *.py
+recursive-include tests/assets *
+
+# Include examples and scripts (for source distributions)
+recursive-include examples *.py *.sh *.md
+recursive-include scripts *.py *.sh
+
+# Include documentation
+recursive-include docs *.md *.rst *.txt
+
+# Exclude unnecessary files
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
+global-exclude *~
+global-exclude *.swp

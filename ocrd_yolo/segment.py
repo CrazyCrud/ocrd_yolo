@@ -17,6 +17,7 @@ from ocrd_utils import (
     polygon_from_points
 )
 from ocrd_models.ocrd_page import (
+    OcrdPage,
     PageType,
     AdvertRegionType,
     ChartRegionType,

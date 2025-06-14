@@ -1,9 +1,10 @@
 import multiprocessing as mp
+import multiprocessing.sharedctypes  # Add this line!
+import ctypes
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 import numpy as np
 import cv2
-import ctypes
 
 from ocrd_utils import (
     getLogger
@@ -221,7 +222,7 @@ def postprocess_morph(scores, classes, masks, components, nproc=8, logger=None):
     Implement via Numpy routines.
     """
     if logger is None:
-        logger = getLogger('ocrd.processor.Detectron2Segment')
+        logger = getLogger('ocrd.processor.Yolo2Segment')
     shared_masks = mp.sharedctypes.RawArray(ctypes.c_bool, masks.size)
     shared_components = mp.sharedctypes.RawArray(ctypes.c_int32, components.size)
     shared_masks_np = tonumpyarray_with_shape(shared_masks, masks.shape)

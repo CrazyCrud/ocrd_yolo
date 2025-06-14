@@ -54,7 +54,12 @@
                 }
             },
             "resources": [
-
+                {
+                    "name": "yolo11n.pt",
+                    "url": "https://huggingface.co/Ultralytics/YOLO11/resolve/365ed86341e7a7456dbc4cafc09f138814ce9ff1/yolo11n.pt",
+                    "size": 5600,
+                    "description": "YOLOv11-nano segmentation model weights"
+                }
             ]
         }
     }
