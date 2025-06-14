@@ -53,3 +53,8 @@ coverage.xml
 
 # Pycharm
 .idea/
+
+# Venv
+.venv/
+env/
+venv/
