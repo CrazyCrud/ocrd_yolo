@@ -294,6 +294,11 @@ class Yolo2Segment(Processor):
         for mask, class_id, score in zip(masks, classes, scores):
             category = self.categories[class_id]
 
+            mask_uint8 = mask.astype(np.uint8)
+            kernel = np.ones((5, 5), np.uint8)
+            mask_closed = cv2.morphologyEx(mask_uint8,cv2.MORPH_CLOSE,kernel)
+            mask = mask_closed > 0
+
             # Find contours
             invalid = True
             for _ in range(10):
@@ -310,19 +315,31 @@ class Yolo2Segment(Processor):
                 self.logger.warning("Ignoring non-contiguous (%d) region for %s", len(contours), category)
                 continue
 
-            region_polygon = contours[0][:, 0, :]  # x,y order
+            raw_contour = contours[0][:, 0, :]  # x,y order
             if zoomed != 1.0:
-                region_polygon = region_polygon / zoomed
+                raw_contour = raw_contour / zoomed
 
-            # Transform coordinates
-            region_polygon = coordinates_for_segment(region_polygon, None, coords)
-            region_polygon = polygon_for_parent(region_polygon, segment)
-            if region_polygon is None:
-                self.logger.warning("Ignoring extant region for %s", category)
+            # 3) Map into page coords
+            page_poly = coordinates_for_segment(raw_contour, None, coords)
+            page_poly = polygon_for_parent(page_poly, segment)
+            if page_poly is None:
+                self.logger.warning("Ignoring clipped-away region for %s", category)
                 continue
 
-            # Create region
-            region_coords = CoordsType(points_from_polygon(region_polygon), conf=score)
+            # Build a Shapely polygon and compute its convex hull
+            poly = Polygon(page_poly).convex_hull
+
+            # Optionally simplify to remove tiny bumps
+            poly = poly.simplify(tolerance=5.0, preserve_topology=True)
+
+            # Extract the exterior coords (drop the closing point)
+            smoothed_coords = list(poly.exterior.coords)[:-1]
+
+            # 7) Create your CoordsType from the smoothed polygon
+            region_coords = CoordsType(
+                points_from_polygon(smoothed_coords),
+                conf=score
+            )
             cat2class = {
                 'AdvertRegion': AdvertRegionType,
                 'ChartRegion': ChartRegionType,

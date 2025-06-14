@@ -7,8 +7,8 @@
         "TextRegion:page",
         "TextRegion:insert"
     ],
-    "min_confidence": 0.3,
+    "min_confidence": 0.5,
     "device": "cpu",
-    "debug_img": "none",
-    "postprocessing": "full"
+    "debug_img": "visualize",
+    "postprocessing": "none"
 }
