@@ -5,7 +5,7 @@
 
 ❗ WORK STILL IN PROGRESS
 
-This OCR-D processor uses YOLOv11 models to detect and segment document regions (text blocks, images, tables, etc.) in document images. YOLOv11 provides built-in segmentation masks for all detections.
+This OCR-D processor uses YOLOv11 models to detect and segment document regions in document images. YOLOv11 provides built-in segmentation masks for all detections.
 
 ## Installation
 
@@ -42,15 +42,15 @@ ocrd-yolo-segment \
 
 ### Table Segmentation
 
-For segmenting table regions into cells:
+For segmenting table regions:
 
 ```bash
 ocrd-yolo-segment \
     -I OCR-D-SEG-BLOCK \
-    -O OCR-D-SEG-TABLE-CELL \
+    -O OCR-D-SEG-TABLE \
     -p '{
         "model_weights": "yolo11s-table.pt",
-        "categories": ["TextRegion:cell", "TextRegion:header"],
+        "categories": ["TextRegion:columns", "TextRegion:header"],
         "operation_level": "table",
         "min_confidence": 0.7
     }'
