@@ -119,7 +119,7 @@ ocrd-olena-binarize -I OCR-D-IMG -O OCR-D-BIN
 
 # 3. Detect regions with YOLO
 ocrd-yolo-segment -I OCR-D-BIN -O OCR-D-SEG-REGION \
-    -p '{"model_weights": "yolo11s-publaynet.pt", ...}'
+    -p '{"model_weights": "yolo11s-example.pt", ...}'
 
 # 4. Detect lines
 ocrd-tesserocr-segment-line -I OCR-D-SEG-REGION -O OCR-D-SEG-LINE
@@ -169,7 +169,7 @@ Reduce batch size or use a smaller model:
 
 ```bash
 # Use smaller model
--p '{"model_weights": "yolo11n-publaynet.pt"}'
+-p '{"model_weights": "yolo11n-example.pt"}'
 
 # Or force CPU
 -p '{"device": "cpu"}'

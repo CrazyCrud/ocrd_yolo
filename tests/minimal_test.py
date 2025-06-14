@@ -140,7 +140,7 @@ def main():
     print("1. Train a model on document data:")
     print("   python train_yolo_ocrd.py --dataset-name publaynet ...")
     print("\n2. Or download a pre-trained model:")
-    print("   ocrd resmgr download ocrd-yolo-segment yolo11s-publaynet.pt")
+    print("   ocrd resmgr download ocrd-yolo-segment yolo11s-example.pt")
     print("\n3. Run on real documents:")
     print(f"   ocrd-yolo-segment -I OCR-D-IMG -O OCR-D-SEG -p '{{\"model_weights\": \"model.pt\", ...}}'")
 
