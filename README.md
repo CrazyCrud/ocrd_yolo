@@ -13,10 +13,15 @@ This OCR-D processor uses YOLOv11 models to detect and segment document regions 
 pip install ocrd-yolo
 ```
 
-Or install via Dockerhub
-
+Or install via Dockerhub:
 ```commandline
-TODO
+- docker compose build
+- docker-compose run ocrd-yolo
+```
+For CPU only:
+```commandline
+- docker compose build ocrd-yolo-cpu
+- docker-compose run ocrd-yolo-cpu
 ```
 
 ## Usage

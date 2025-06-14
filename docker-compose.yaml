@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  ocrd-yolo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOCKER_BASE_IMAGE: ocrd/core-cuda-torch:latest
+        VCS_REF: ${VCS_REF:-main}
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}
+    image: ocrd/yolo:latest
+    container_name: ocrd-yolo
+    volumes:
+      - ./data:/data
+      - ./models:/models
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+
+  # CPU-only version for testing
+  ocrd-yolo-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOCKER_BASE_IMAGE: ocrd/core:latest
+        VCS_REF: ${VCS_REF:-main}
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}
+    image: ocrd/yolo:cpu
+    container_name: ocrd-yolo-cpu
+    volumes:
+      - ./data:/data
+      - ./models:/models
+    environment:
+      - CUDA_VISIBLE_DEVICES=""
+    command: /bin/bash
+    stdin_open: true
+    tty: true
