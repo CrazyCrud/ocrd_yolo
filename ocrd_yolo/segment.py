@@ -64,7 +64,17 @@ class Yolo2Segment(Processor):
         self.logger.info("Using device %s", device)
 
         # Load model
-        model_weights = self.resolve_resource(self.parameter['model_weights'])
+        model_weights = self.parameter['model_weights']
+
+        # Try to resolve as resource first, then as regular file
+        try:
+            model_weights = self.resolve_resource(model_weights)
+        except Exception:
+            # If not a resource, check if it's a valid file path
+            import os
+            if not os.path.exists(model_weights):
+                raise FileNotFoundError(f"Model file not found: {model_weights}")
+
         self.logger.info("Loading YOLOv11 weights from %s", model_weights)
         self.model = YOLO(model_weights)
         self.model.to(device)
@@ -85,14 +95,19 @@ class Yolo2Segment(Processor):
 
         page = pcgts.get_Page()
         page_image_raw, page_coords, page_image_info = self.workspace.image_from_page(
-            page, page_id, feature_filter='binarized')
+            page, page_id, feature_filter='raw')
 
         # For morphological post-processing, we need the binarized image
         if self.parameter['postprocessing'] != 'none':
-            page_image_bin, _, _ = self.workspace.image_from_page(
-                page, page_id, feature_selector='binarized')
-            page_image_raw, page_image_bin = _ensure_consistent_crops(
-                page_image_raw, page_image_bin)
+            try:
+                page_image_bin, _, _ = self.workspace.image_from_page(
+                    page, page_id, feature_selector='binarized')
+                page_image_raw, page_image_bin = _ensure_consistent_crops(
+                    page_image_raw, page_image_bin)
+            except:
+                # If no binarized version exists, create one from raw
+                self.logger.warning("No binarized image found, creating from raw image")
+                page_image_bin = page_image_raw.convert('L').point(lambda x: 0 if x < 128 else 255, '1')
         else:
             page_image_bin = page_image_raw
 
@@ -105,12 +120,15 @@ class Yolo2Segment(Processor):
         else:
             dpi = None
             zoom = 1.0
-
+        """
         if zoom < 2.0:
             zoomed = zoom / 2.0
             self.logger.info("scaling %dx%d image by %.2f", page_image_raw.width, page_image_raw.height, zoomed)
         else:
             zoomed = 1.0
+        """
+
+        zoomed = 1.0
 
         for segment in ([page] if level == 'page' else
         page.get_AllRegions(depth=1, classes=['Table'])):
@@ -126,12 +144,16 @@ class Yolo2Segment(Processor):
                 coords = page_coords
             else:
                 image_raw, coords = self.workspace.image_from_segment(
-                    segment, page_image_raw, page_coords, feature_filter='binarized')
+                    segment, page_image_raw, page_coords, feature_filter='raw')
                 if self.parameter['postprocessing'] != 'none':
-                    image_bin, _ = self.workspace.image_from_segment(
-                        segment, page_image_bin, page_coords)
-                    image_raw, image_bin = _ensure_consistent_crops(
-                        image_raw, image_bin)
+                    try:
+                        image_bin, _ = self.workspace.image_from_segment(
+                            segment, page_image_bin, page_coords)
+                        image_raw, image_bin = _ensure_consistent_crops(
+                            image_raw, image_bin)
+                    except:
+                        # Create binarized from raw if not available
+                        image_bin = image_raw.convert('L').point(lambda x: 0 if x < 128 else 255, '1')
                 else:
                     image_bin = image_raw
 
@@ -165,7 +187,7 @@ class Yolo2Segment(Processor):
 
     def _process_segment(self, segment, ignore, coords, array_raw, array_bin, zoomed, page_id) -> Optional[
         OcrdPageResultImage]:
-        self.logger = getLogger('processor.Yolo2Segment')
+        # self.logger = getLogger('processor.Yolo2Segment')
         segtype = segment.__class__.__name__[:-4]
         segment.set_custom('coords=%s' % coords['transform'])
         height, width = array_raw.shape[:2]
@@ -182,12 +204,30 @@ class Yolo2Segment(Processor):
                 scale = int(np.median(counts))
                 self.logger.debug("estimated scale: %d", scale)
 
+        self.logger.info(
+            "Feeding YOLO: array_raw shape=%s, dtype=%s",
+            array_raw.shape, array_raw.dtype
+        )
         # Run YOLO inference
-        results = self.model(array_raw, conf=self.min_confidence, verbose=False)
+        pil = Image.fromarray(array_raw)
+        results = self.model(pil, conf=self.min_confidence, verbose=False)
+        # results = self.model(array_raw, conf=self.min_confidence, verbose=False)
+
+        n_boxes = len(results[0].boxes or [])
+        n_masks = len(getattr(results[0], 'masks', []) or [])
+        self.logger.info("Wrapper: YOLO returned %d boxes and %d masks", n_boxes, n_masks)
 
         if not results or not results[0].boxes:
             self.logger.warning("Detected no regions on %s '%s'", segtype, segment.id)
             return None
+        else:
+            self.logger.info(f"YOLO inference complete: {results}")
+            self.logger.info(f"Raw detections: {len(results[0].boxes)}")
+            for i, box in enumerate(results[0].boxes):
+                cls = int(box.cls)
+                conf = float(box.conf)
+                self.logger.info(
+                    f" Detection {i}: class={cls} ({self.categories[cls] if cls < len(self.categories) else 'unknown'}), conf={conf:.3f}")
 
         # Extract detections from YOLO results
         result = results[0]
@@ -219,7 +259,7 @@ class Yolo2Segment(Processor):
             classes = classes[keep_indices]
 
         # Handle existing regions for NMS
-        if len(ignore):
+        if len(ignore) and not isinstance(segment, PageType):
             scores = np.insert(scores, 0, 1.0, axis=0)
             classes = np.insert(classes, 0, -1, axis=0)
             masks = np.insert(masks, 0, 0, axis=0)

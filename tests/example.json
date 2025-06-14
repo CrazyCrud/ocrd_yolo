@@ -1,0 +1,14 @@
+{
+    "model_weights": "/home/lec23641/workbench/projects/ocrd_yolo/tests/example.pt",
+    "categories": [
+        "TableRegion",
+        "TextRegion:column",
+        "TextRegion",
+        "TextRegion:page",
+        "TextRegion:insert"
+    ],
+    "min_confidence": 0.3,
+    "device": "cpu",
+    "debug_img": "none",
+    "postprocessing": "full"
+}

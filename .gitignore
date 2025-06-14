@@ -58,3 +58,6 @@ coverage.xml
 .venv/
 env/
 venv/
+
+# Tests
+tests/example.json
