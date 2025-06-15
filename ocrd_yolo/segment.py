@@ -405,7 +405,9 @@ class Yolo2Segment(Processor):
             if not poly.is_valid:
                 poly = poly.convex_hull
 
-            poly = poly.simplify(tolerance=5.0, preserve_topology=True)
+            # Add buffer
+            poly = poly.buffer(5.0)
+            poly = poly.simplify(tolerance=1.0, preserve_topology=True)
             # Optionally simplify to remove tiny bumps
             """
             bbox = poly.bounds  # (minx, miny, maxx, maxy)
