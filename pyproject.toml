@@ -65,6 +65,7 @@ docs = [
 Homepage = "https://github.com/CrazyCrud/ocrd_yolo"
 Repository = "https://github.com/CrazyCrud/ocrd_yolo"
 Issues = "https://github.com/CrazyCrud/ocrd_yolo/issues"
+Documentation = "https://github.com/CrazyCrud/ocrd_yolo#readme"
 
 [project.scripts]
 ocrd-yolo-segment = "ocrd_yolo.__main__:ocrd_yolo_segment"
