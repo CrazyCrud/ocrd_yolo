@@ -3,8 +3,6 @@
 > YOLOv11-based region segmentation for OCR-D
 > You can find the ocrd_detectron2 wrapper here: https://github.com/bertsky/ocrd_detectron2/tree/master
 
-❗ WORK STILL IN PROGRESS
-
 This OCR-D processor uses YOLOv11 models to detect and segment document regions in document images. YOLOv11 provides built-in segmentation masks for all detections.
 
 ## Installation
@@ -35,7 +33,7 @@ ocrd-yolo-segment \
     -O OCR-D-SEG-REGION \
     -p '{
         "model_weights": "yolo11s-example.pt",
-        "categories": ["TextRegion:paragraph", "TextRegion:heading", "TextRegion:floating", "TableRegion", "ImageRegion"],
+        "categories": ["TextRegion:paragraph", "TextRegion:heading", "Border:page", "TableRegion", "ImageRegion"],
         "min_confidence": 0.5
     }'
 ```
@@ -101,6 +99,7 @@ Categories map model predictions to PAGE-XML region types:
     "categories": [
         "TextRegion",           // Simple text region
         "TextRegion:heading",   // Text region with subtype
+        "Border:page",          // Page border
         "ImageRegion",          // Image/figure
         "TableRegion",          // Table
         "GraphicRegion",        // Graphics/drawings
@@ -159,8 +158,8 @@ ocrd-yolo-segment -I OCR-D-SEG-REGION-1 -O OCR-D-SEG-REGION-2 \
    - Adjust batch size based on GPU memory
 
 3. **Resolution**:
-   - The processor automatically handles high-resolution images
-   - Images are scaled to max 300 DPI for processing
+   - Image resolution is retained as it increases YOLO's performance 
+   - Will be adaptable in the future
 
 4. **Post-processing**:
    - Use "only-nms" for cleaner text documents
