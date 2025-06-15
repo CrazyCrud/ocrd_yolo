@@ -1,0 +1,14 @@
+{
+    "model_weights": "/path/ot/example.pt",
+    "categories": [
+        "TableRegion",
+        "TextRegion:column",
+        "TextRegion",
+        "Border:page",
+        "TextRegion:insert"
+    ],
+    "min_confidence": 0.5,
+    "device": "cpu",
+    "debug_img": "none",
+    "postprocessing": "none"
+}

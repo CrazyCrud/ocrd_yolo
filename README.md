@@ -8,7 +8,7 @@ This OCR-D processor uses YOLOv11 models to detect and segment document regions 
 ## Installation
 
 ```bash
-pip install ocrd-yolo
+pip install -e .
 ```
 
 Or install via Dockerhub:
