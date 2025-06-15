@@ -19,6 +19,7 @@ from ocrd_utils import (
 from ocrd_models.ocrd_page import (
     OcrdPage,
     PageType,
+    BorderType,
     AdvertRegionType,
     ChartRegionType,
     ChemRegionType,
@@ -120,15 +121,36 @@ class Yolo2Segment(Processor):
         else:
             dpi = None
             zoom = 1.0
+
+        # TODO: Figure out where to put the parameters:
         """
-        if zoom < 2.0:
-            zoomed = zoom / 2.0
-            self.logger.info("scaling %dx%d image by %.2f", page_image_raw.width, page_image_raw.height, zoomed)
-        else:
-            zoomed = 1.0
+        "resize_mode": {
+            "type": "string",
+            "enum": ["none", "auto", "fixed"],
+            "default": "none",
+            "description": "Image resizing mode: none=keep original, auto=normalize to 300dpi, fixed=use fixed size"
+        },
+        "target_dpi": {
+            "type": "number",
+            "default": 300,
+            "description": "Target DPI for 'auto' resize mode"
+        }
         """
 
-        zoomed = 1.0
+        resize_mode = self.parameter.get('resize_mode', 'none')
+
+        if resize_mode == 'none':
+            zoomed = 1.0
+        elif resize_mode == 'auto':
+            # Original behavior
+            if zoom < 2.0:
+                zoomed = zoom / 2.0
+            else:
+                zoomed = 1.0
+        elif resize_mode == 'fixed':
+            # Resize to specific size (e.g., 1024x1024)
+            target_size = self.parameter.get('target_size', 1024)
+            zoomed = target_size / max(page_image_raw.width, page_image_raw.height)
 
         for segment in ([page] if level == 'page' else
         page.get_AllRegions(depth=1, classes=['Table'])):
@@ -187,7 +209,6 @@ class Yolo2Segment(Processor):
 
     def _process_segment(self, segment, ignore, coords, array_raw, array_bin, zoomed, page_id) -> Optional[
         OcrdPageResultImage]:
-        # self.logger = getLogger('processor.Yolo2Segment')
         segtype = segment.__class__.__name__[:-4]
         segment.set_custom('coords=%s' % coords['transform'])
         height, width = array_raw.shape[:2]
@@ -211,7 +232,6 @@ class Yolo2Segment(Processor):
         # Run YOLO inference
         pil = Image.fromarray(array_raw)
         results = self.model(pil, conf=self.min_confidence, verbose=False)
-        # results = self.model(array_raw, conf=self.min_confidence, verbose=False)
 
         n_boxes = len(results[0].boxes or [])
         n_masks = len(getattr(results[0], 'masks', []) or [])
@@ -294,13 +314,66 @@ class Yolo2Segment(Processor):
         for mask, class_id, score in zip(masks, classes, scores):
             category = self.categories[class_id]
 
+            # Special handling for page class
+            if category.startswith('Border') and isinstance(segment, PageType):
+                # Check if Border already exists
+                if segment.get_Border() is not None:
+                    self.logger.warning("Page already has a Border, skipping new border with score %.3f", score)
+                    continue
+                self.logger.info("Processing page boundary (score=%.3f)", score)
+
+                # Apply morphological closing to clean up the mask
+                mask_uint8 = mask.astype(np.uint8)
+                border_kernel_size = max(10, scale // 2)
+                kernel = np.ones((border_kernel_size, border_kernel_size), np.uint8)
+                mask_closed = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
+
+                # Find contours
+                contours, _ = cv2.findContours(mask_closed,
+                                               cv2.RETR_EXTERNAL,
+                                               cv2.CHAIN_APPROX_SIMPLE)
+
+                if contours:
+                    # For page boundary, we want the convex hull of all contours
+                    all_points = np.concatenate(contours)
+                    hull = cv2.convexHull(all_points)
+
+                    # Convert to page coordinates
+                    page_polygon = hull[:, 0, :]  # x,y order
+                    if zoomed != 1.0:
+                        page_polygon = page_polygon / zoomed
+
+                    # Transform to page coordinate system
+                    page_polygon = coordinates_for_segment(page_polygon, None, coords)
+
+                    # Create Border element
+                    border_coords = CoordsType(points_from_polygon(page_polygon), conf=score)
+                    border = BorderType(Coords=border_coords)
+                    segment.set_Border(border)
+
+                    self.logger.info("Set page Border from 'page' detection (conf=%.3f)", score)
+                else:
+                    self.logger.warning("Could not extract page boundary contour")
+
+                # Skip creating a region for this
+                continue
+
+            # Skip empty categories immediately
+            if not category:
+                self.logger.debug("Skipping empty category for class %d", class_id)
+                continue
+
             mask_uint8 = mask.astype(np.uint8)
-            kernel = np.ones((5, 5), np.uint8)
-            mask_closed = cv2.morphologyEx(mask_uint8,cv2.MORPH_CLOSE,kernel)
+            kernel_size = max(3, min(scale // 5, 15))
+            if kernel_size % 2 == 0:
+                kernel_size += 1
+            kernel = np.ones((kernel_size, kernel_size), np.uint8)
+            mask_closed = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
             mask = mask_closed > 0
 
-            # Find contours
+            # Find contours while iterating 10 times to merge them
             invalid = True
+            contours = []
             for _ in range(10):
                 contours, _ = cv2.findContours(mask.astype(np.uint8),
                                                cv2.RETR_EXTERNAL,
@@ -319,7 +392,7 @@ class Yolo2Segment(Processor):
             if zoomed != 1.0:
                 raw_contour = raw_contour / zoomed
 
-            # 3) Map into page coords
+            # Map into page coords
             page_poly = coordinates_for_segment(raw_contour, None, coords)
             page_poly = polygon_for_parent(page_poly, segment)
             if page_poly is None:
@@ -327,10 +400,19 @@ class Yolo2Segment(Processor):
                 continue
 
             # Build a Shapely polygon and compute its convex hull
-            poly = Polygon(page_poly).convex_hull
+            # poly = Polygon(page_poly).convex_hull
+            poly = Polygon(page_poly)
+            if not poly.is_valid:
+                poly = poly.convex_hull
 
-            # Optionally simplify to remove tiny bumps
             poly = poly.simplify(tolerance=5.0, preserve_topology=True)
+            # Optionally simplify to remove tiny bumps
+            """
+            bbox = poly.bounds  # (minx, miny, maxx, maxy)
+            poly_size = max(bbox[2] - bbox[0], bbox[3] - bbox[1])
+            tolerance = poly_size * 0.01  # 1% of size
+            poly = poly.simplify(tolerance=tolerance, preserve_topology=True)
+            """
 
             # Extract the exterior coords (drop the closing point)
             smoothed_coords = list(poly.exterior.coords)[:-1]

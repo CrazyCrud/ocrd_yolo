@@ -4,11 +4,11 @@
         "TableRegion",
         "TextRegion:column",
         "TextRegion",
-        "TextRegion:page",
+        "Border:page",
         "TextRegion:insert"
     ],
     "min_confidence": 0.5,
     "device": "cpu",
-    "debug_img": "visualize",
+    "debug_img": "none",
     "postprocessing": "none"
 }
