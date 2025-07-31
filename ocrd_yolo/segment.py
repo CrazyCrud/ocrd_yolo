@@ -152,8 +152,7 @@ class Yolo2Segment(Processor):
             target_size = self.parameter.get('target_size', 1024)
             zoomed = target_size / max(page_image_raw.width, page_image_raw.height)
 
-        for segment in ([page] if level == 'page' else
-        page.get_AllRegions(depth=1, classes=['Table'])):
+        for segment in ([page] if level == 'page' else page.get_AllRegions(depth=1, classes=['Table'])):
             # Get existing regions
             def at_segment(region):
                 return region.parent_object_ is segment
@@ -201,13 +200,13 @@ class Yolo2Segment(Processor):
             array_bin = np.array(image_bin)
             array_bin = ~array_bin  # Invert for processing
 
-            image = self._process_segment(segment, regions, coords, array_raw, array_bin, zoomed, page_id)
+            image = self._process_segment(segment, regions, coords, array_raw, array_bin, zoomed, page_id, level)
             if image:
                 result.images.append(image)
 
         return result
 
-    def _process_segment(self, segment, ignore, coords, array_raw, array_bin, zoomed, page_id) -> Optional[
+    def _process_segment(self, segment, ignore, coords, array_raw, array_bin, zoomed, page_id, level) -> Optional[
         OcrdPageResultImage]:
         segtype = segment.__class__.__name__[:-4]
         segment.set_custom('coords=%s' % coords['transform'])
@@ -355,7 +354,7 @@ class Yolo2Segment(Processor):
 
             # Special handling for page class
             if category.startswith('Border') and isinstance(segment, PageType):
-                if not detect_page_border:
+                if not detect_page_border or level != 'page':
                     self.logger.info("Skipping page border detection (disabled in config)")
                     continue
                 # Check if Border already exists
