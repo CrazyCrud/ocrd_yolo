@@ -16,7 +16,7 @@ from ocrd_utils import (
 NP_POSTPROCESSING_OUTER = False
 # when pruning overlapping detections (in either mode),
 # require at least this share of the area to be redundant
-RECALL_THRESHOLD = 0.8
+RECALL_THRESHOLD = 0.95
 # when finalizing contours of detections (in either mode),
 # snap to connected components overlapping by this share
 # (of component area), i.e. include if larger and exclude
@@ -197,8 +197,9 @@ def postprocess_nms(scores, classes, masks, page_array_bin, categories, min_conf
             bad[i] = True
             continue
         worse = score < scores
-        if np.any(worse & overlaps[i]):
-            logger.debug("Ignoring instance for %s with %.2f overlapping better neighbour",
+        same_class = classes == classes[i]  # Add this
+        if np.any(worse & same_class & overlaps[i]):  # Modified condition
+            logger.debug("Ignoring instance for %s with %.2f overlapping better neighbour of same class",
                          category, score)
             bad[i] = True
         else:

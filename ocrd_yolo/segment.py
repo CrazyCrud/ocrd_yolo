@@ -260,18 +260,8 @@ class Yolo2Segment(Processor):
         if hasattr(result, 'masks') and result.masks is not None and not use_boxes_as_masks:
             masks = result.masks.data.cpu().numpy()
 
-            # Quality check for masks - if page border mask is suspiciously small, use boxes
-            for i, (box, mask) in enumerate(zip(boxes, masks)):
-                cls_idx = int(box.cls)
-                if cls_idx < len(self.categories) and self.categories[cls_idx] == 'Border:page':
-                    coverage = np.sum(mask > 0.5) / (mask.shape[0] * mask.shape[1])
-                    if coverage < 0.5:  # Page border should cover >50% of image
-                        self.logger.warning("Page border mask coverage too low (%.1f%%), falling back to boxes",
-                                            coverage * 100)
-                        use_boxes_as_masks = True
-                        break
-
         # Create masks from bounding boxes if needed
+
         if use_boxes_as_masks or masks is None:
             self.logger.info("Using bounding boxes to create masks")
             masks = []
@@ -348,8 +338,20 @@ class Yolo2Segment(Processor):
         detect_page_border = True
         # Convert masks to regions
         region_no = 0
-        for mask, class_id, score in zip(masks, classes, scores):
+
+        self.logger.info("Starting main loop with %d masks, %d classes, %d scores",
+                         len(masks), len(classes), len(scores))
+
+        for idx, (mask, class_id, score) in enumerate(zip(masks, classes, scores)):
             category = self.categories[class_id]
+            self.logger.info("=== Loop iteration %d/%d: %s (class=%d, score=%.3f) ===", idx + 1, len(masks), category,
+                             class_id, score)
+
+            if not category:
+                self.logger.warning("Category is empty/None for class %d", class_id)
+                continue
+
+            self.logger.info("Processing non-border region: %s", category)
 
             # Special handling for page class
             if category.startswith('Border') and isinstance(segment, PageType):
@@ -399,9 +401,6 @@ class Yolo2Segment(Processor):
                 continue
 
             # Skip empty categories immediately
-            if not category:
-                self.logger.debug("Skipping empty category for class %d", class_id)
-                continue
 
             mask_uint8 = mask.astype(np.uint8)
             kernel_size = max(3, min(scale // 5, 15))
@@ -483,6 +482,8 @@ class Yolo2Segment(Processor):
             }
 
             cat = category.split(':')
+            self.logger.info("Category split: %s -> %s", category, cat)
+
             try:
                 regiontype = cat2class[cat[0]]
             except KeyError:
@@ -508,7 +509,19 @@ class Yolo2Segment(Processor):
                 except (KeyError, ValueError):
                     region.set_custom(cat[1])
 
-            getattr(segment, f'add_{cat[0]}')(region)
+            self.logger.info("About to add %s to %s", cat[0], segment.__class__.__name__)
+
+            # Check if the segment has the required add method
+            add_method = f'add_{cat[0]}'
+            if not hasattr(segment, add_method):
+                self.logger.error("Segment %s does not have method %s!",
+                                  segment.__class__.__name__, add_method)
+                continue
+
+            getattr(segment, add_method)(region)
+
+            self.logger.info("=== Completed iteration %d/%d ===", idx + 1, len(masks))
+
             self.logger.info("Detected %s region%04d (p=%.2f) on %s '%s'",
                              category, region_no, score, segtype, segment.id)
 
