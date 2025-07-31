@@ -253,17 +253,53 @@ class Yolo2Segment(Processor):
         result = results[0]
         boxes = result.boxes
 
-        # Get masks, scores, and classes
-        # YOLOv11 always provides segmentation masks
-        masks = result.masks.data.cpu().numpy()
-        # Resize masks to original image size if needed
-        if masks.shape[1:] != (height, width):
-            masks_resized = []
-            for mask in masks:
-                mask_resized = cv2.resize(mask.astype(np.uint8), (width, height),
-                                          interpolation=cv2.INTER_NEAREST)
-                masks_resized.append(mask_resized > 0.5)
-            masks = np.array(masks_resized)
+        # Try to get masks, but prepare box fallback
+        use_boxes_as_masks = True  # self.parameter.get('use_boxes_as_masks', False)
+        masks = None
+
+        if hasattr(result, 'masks') and result.masks is not None and not use_boxes_as_masks:
+            masks = result.masks.data.cpu().numpy()
+
+            # Quality check for masks - if page border mask is suspiciously small, use boxes
+            for i, (box, mask) in enumerate(zip(boxes, masks)):
+                cls_idx = int(box.cls)
+                if cls_idx < len(self.categories) and self.categories[cls_idx] == 'Border:page':
+                    coverage = np.sum(mask > 0.5) / (mask.shape[0] * mask.shape[1])
+                    if coverage < 0.5:  # Page border should cover >50% of image
+                        self.logger.warning("Page border mask coverage too low (%.1f%%), falling back to boxes",
+                                            coverage * 100)
+                        use_boxes_as_masks = True
+                        break
+
+        # Create masks from bounding boxes if needed
+        if use_boxes_as_masks or masks is None:
+            self.logger.info("Using bounding boxes to create masks")
+            masks = []
+            for box in boxes:
+                # Get box coordinates (xyxy format)
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+
+                # Create mask from box
+                mask = np.zeros((height, width), dtype=np.uint8)
+                x1, x2 = int(x1 * width / result.orig_shape[1]), int(x2 * width / result.orig_shape[1])
+                y1, y2 = int(y1 * height / result.orig_shape[0]), int(y2 * height / result.orig_shape[0])
+
+                margin = 5  # pixels
+                x1, y1, x2, y2 = max(0, x1 - margin), max(0, y1 - margin), min(width, x2 + margin), min(height,
+                                                                                                        y2 + margin)
+                mask[y1:y2, x1:x2] = 1
+                masks.append(mask > 0)
+
+            masks = np.array(masks)
+            self.logger.info("Created %d masks from boxes", len(masks))
+        else:
+            if masks.shape[1:] != (height, width):
+                masks_resized = []
+                for mask in masks:
+                    mask_resized = cv2.resize(mask.astype(np.uint8), (width, height),
+                                              interpolation=cv2.INTER_NEAREST)
+                    masks_resized.append(mask_resized > 0.5)
+                masks = np.array(masks_resized)
 
         scores = boxes.conf.cpu().numpy()
         classes = boxes.cls.cpu().numpy().astype(int)
@@ -309,6 +345,7 @@ class Yolo2Segment(Processor):
             classes = classes[1:]
             masks = masks[1:]
 
+        detect_page_border = True
         # Convert masks to regions
         region_no = 0
         for mask, class_id, score in zip(masks, classes, scores):
@@ -316,6 +353,9 @@ class Yolo2Segment(Processor):
 
             # Special handling for page class
             if category.startswith('Border') and isinstance(segment, PageType):
+                if not detect_page_border:
+                    self.logger.info("Skipping page border detection (disabled in config)")
+                    continue
                 # Check if Border already exists
                 if segment.get_Border() is not None:
                     self.logger.warning("Page already has a Border, skipping new border with score %.3f", score)
