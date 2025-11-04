@@ -34,6 +34,7 @@ from ocrd_models.ocrd_page import (
     SeparatorRegionType,
     TableRegionType,
     TextRegionType,
+    TextLineType,
     UnknownRegionType,
     CoordsType,
     AlternativeImageType
@@ -89,10 +90,24 @@ class Yolo2Segment(Processor):
         self.logger.info(f"Model has {len(model_classes)} classes")
 
     def process_page_pcgts(self, *input_pcgts: Optional[OcrdPage], page_id: Optional[str] = None) -> OcrdPageResult:
-        """Use YOLO to segment each page into regions."""
+        """Use YOLO to segment each page.
+
+        `level-of-operation` controls where we operate:
+          - "page":   on the full page
+          - "table":  inside existing TableRegions
+          - "region": inside existing TextRegions
+
+        For backwards-compatibility, `operation_level` is still accepted as an alias.
+        """
         pcgts = input_pcgts[0]
         result = OcrdPageResult(pcgts)
-        level = self.parameter['operation_level']
+
+        # Backwards-compatible: prefer `level-of-operation` if given,
+        # otherwise fall back to your original `operation_level`.
+        level = self.parameter.get(
+            'level-of-operation',
+            self.parameter.get('operation_level', 'page')
+        )
 
         page = pcgts.get_Page()
         page_image_raw, page_coords, page_image_info = self.workspace.image_from_page(
@@ -105,10 +120,12 @@ class Yolo2Segment(Processor):
                     page, page_id, feature_selector='binarized')
                 page_image_raw, page_image_bin = _ensure_consistent_crops(
                     page_image_raw, page_image_bin)
-            except:
+            except Exception:
                 # If no binarized version exists, create one from raw
                 self.logger.warning("No binarized image found, creating from raw image")
-                page_image_bin = page_image_raw.convert('L').point(lambda x: 0 if x < 128 else 255, '1')
+                page_image_bin = page_image_raw.convert('L').point(
+                    lambda x: 0 if x < 128 else 255, '1'
+                )
         else:
             page_image_bin = page_image_raw
 
@@ -121,21 +138,6 @@ class Yolo2Segment(Processor):
         else:
             dpi = None
             zoom = 1.0
-
-        # TODO: Figure out where to put the parameters:
-        """
-        "resize_mode": {
-            "type": "string",
-            "enum": ["none", "auto", "fixed"],
-            "default": "none",
-            "description": "Image resizing mode: none=keep original, auto=normalize to 300dpi, fixed=use fixed size"
-        },
-        "target_dpi": {
-            "type": "number",
-            "default": 300,
-            "description": "Target DPI for 'auto' resize mode"
-        }
-        """
 
         resize_mode = self.parameter.get('resize_mode', 'none')
 
@@ -151,9 +153,29 @@ class Yolo2Segment(Processor):
             # Resize to specific size (e.g., 1024x1024)
             target_size = self.parameter.get('target_size', 1024)
             zoomed = target_size / max(page_image_raw.width, page_image_raw.height)
+        else:
+            self.logger.warning("Unknown resize_mode '%s', falling back to 'none'", resize_mode)
+            zoomed = 1.0
 
-        for segment in ([page] if level == 'page' else page.get_AllRegions(depth=1, classes=['Table'])):
-            # Get existing regions
+        #
+        # NEW: decide which segments to process, Kraken-style
+        #
+        if level == 'page':
+            segments = [page]
+        elif level == 'table':
+            segments = page.get_AllRegions(depth=1, classes=['Table'])
+            if not segments:
+                self.logger.warning("No existing TableRegions on page '%s'", page_id)
+        elif level in ('region', 'text-region'):
+            # "region" meaning TextRegions (like ocrd-kraken's level-of-operation=region)
+            segments = page.get_AllRegions(depth=1, classes=['Text'])
+            if not segments:
+                self.logger.warning("No existing TextRegions on page '%s'", page_id)
+        else:
+            raise ValueError(f"Unknown level-of-operation / operation_level: {level}")
+
+        for segment in segments:
+            # Get existing regions *under this segment* (for NMS / masking etc)
             def at_segment(region):
                 return region.parent_object_ is segment
 
@@ -172,13 +194,15 @@ class Yolo2Segment(Processor):
                             segment, page_image_bin, page_coords)
                         image_raw, image_bin = _ensure_consistent_crops(
                             image_raw, image_bin)
-                    except:
+                    except Exception:
                         # Create binarized from raw if not available
-                        image_bin = image_raw.convert('L').point(lambda x: 0 if x < 128 else 255, '1')
+                        image_bin = image_raw.convert('L').point(
+                            lambda x: 0 if x < 128 else 255, '1'
+                        )
                 else:
                     image_bin = image_raw
 
-            # Ensure RGB
+            # Ensure RGB / binary formats
             if image_raw.mode == '1':
                 image_raw = image_raw.convert('L')
             image_raw = image_raw.convert(mode='RGB')
@@ -200,7 +224,13 @@ class Yolo2Segment(Processor):
             array_bin = np.array(image_bin)
             array_bin = ~array_bin  # Invert for processing
 
-            image = self._process_segment(segment, regions, coords, array_raw, array_bin, zoomed, page_id, level)
+            # Pass `level` through so _process_segment can, if needed,
+            # distinguish page/table/region behaviour.
+            image = self._process_segment(
+                segment, regions, coords,
+                array_raw, array_bin, zoomed,
+                page_id, level
+            )
             if image:
                 result.images.append(image)
 
@@ -246,7 +276,8 @@ class Yolo2Segment(Processor):
                 cls = int(box.cls)
                 conf = float(box.conf)
                 self.logger.info(
-                    f" Detection {i}: class={cls} ({self.categories[cls] if cls < len(self.categories) else 'unknown'}), conf={conf:.3f}")
+                    f" Detection {i}: class={cls} ({self.categories[cls] if cls < len(self.categories) else 'unknown'}), conf={conf:.3f}"
+                )
 
         # Extract detections from YOLO results
         result = results[0]
@@ -260,7 +291,6 @@ class Yolo2Segment(Processor):
             masks = result.masks.data.cpu().numpy()
 
         # Create masks from bounding boxes if needed
-
         if use_boxes_as_masks or masks is None:
             self.logger.info("Using bounding boxes to create masks")
             masks = []
@@ -295,7 +325,8 @@ class Yolo2Segment(Processor):
 
         # Filter by categories if specified
         if not all(self.categories):
-            keep_indices = [i for i, cls in enumerate(classes) if cls < len(self.categories) and self.categories[cls]]
+            keep_indices = [i for i, cls in enumerate(classes)
+                            if cls < len(self.categories) and self.categories[cls]]
             if not keep_indices:
                 self.logger.warning("No detections for selected categories on %s '%s'", segtype, segment.id)
                 return None
@@ -335,16 +366,26 @@ class Yolo2Segment(Processor):
             masks = masks[1:]
 
         detect_page_border = True
-        # Convert masks to regions
+        # Convert masks to regions / lines
         region_no = 0
+        line_no = 0
 
         self.logger.info("Starting main loop with %d masks, %d classes, %d scores",
                          len(masks), len(classes), len(scores))
 
         for idx, (mask, class_id, score) in enumerate(zip(masks, classes, scores)):
+            if class_id >= len(self.categories):
+                self.logger.warning(
+                    "Class id %d out of range for categories (len=%d) on segment %s '%s'",
+                    class_id, len(self.categories), segtype, segment.id
+                )
+                continue
+
             category = self.categories[class_id]
-            self.logger.info("=== Loop iteration %d/%d: %s (class=%d, score=%.3f) ===", idx + 1, len(masks), category,
-                             class_id, score)
+            self.logger.info(
+                "=== Loop iteration %d/%d: %s (class=%d, score=%.3f) ===",
+                idx + 1, len(masks), category, class_id, score
+            )
 
             if not category:
                 self.logger.warning("Category is empty/None for class %d", class_id)
@@ -399,8 +440,7 @@ class Yolo2Segment(Processor):
                 # Skip creating a region for this
                 continue
 
-            # Skip empty categories immediately
-
+            # Morphological cleanup of the mask
             mask_uint8 = mask.astype(np.uint8)
             kernel_size = max(3, min(scale // 5, 15))
             if kernel_size % 2 == 0:
@@ -438,30 +478,87 @@ class Yolo2Segment(Processor):
                 continue
 
             # Build a Shapely polygon and compute its convex hull
-            # poly = Polygon(page_poly).convex_hull
             poly = Polygon(page_poly)
             if not poly.is_valid:
                 poly = poly.convex_hull
 
-            # Add buffer
+            # Add buffer and simplify
             poly = poly.buffer(5.0)
             poly = poly.simplify(tolerance=1.0, preserve_topology=True)
-            # Optionally simplify to remove tiny bumps
-            """
-            bbox = poly.bounds  # (minx, miny, maxx, maxy)
-            poly_size = max(bbox[2] - bbox[0], bbox[3] - bbox[1])
-            tolerance = poly_size * 0.01  # 1% of size
-            poly = poly.simplify(tolerance=tolerance, preserve_topology=True)
-            """
 
             # Extract the exterior coords (drop the closing point)
             smoothed_coords = list(poly.exterior.coords)[:-1]
 
-            # 7) Create your CoordsType from the smoothed polygon
+            # Create CoordsType from the smoothed polygon
             region_coords = CoordsType(
                 points_from_polygon(smoothed_coords),
                 conf=score
             )
+
+            cat = category.split(':')
+            self.logger.info("Category split: %s -> %s", category, cat)
+
+            # TextLine case
+            if cat[0] == 'TextLine':
+                # Lines must live inside TextRegions (or TextRegions inside tables),
+                # not directly on the page or table.
+                if level == 'page':
+                    self.logger.warning(
+                        "Got TextLine category '%s' on page level – lines must be created inside regions. Skipping.",
+                        category
+                    )
+                    continue
+
+                # Decide where to attach the line
+                parent_region = None
+
+                if isinstance(segment, TextRegionType):
+                    # Normal case: we are running on a TextRegion
+                    parent_region = segment
+
+                elif isinstance(segment, TableRegionType):
+                    # We are running at table level (level-of-operation = 'table').
+                    # Create or reuse a TextRegion inside the TableRegion to hold lines.
+                    existing_text_regions = segment.get_TextRegion() or []
+                    if existing_text_regions:
+                        parent_region = existing_text_regions[0]
+                    else:
+                        # Create one container TextRegion for all lines in this table
+                        tr_id = f'{segment.id}_textregion'
+                        # Use the table's Coords as the container region's Coords
+                        tr_coords = segment.get_Coords() or region_coords
+                        parent_region = TextRegionType(id=tr_id, Coords=tr_coords)
+                        segment.add_TextRegion(parent_region)
+                        self.logger.info("Created TextRegion %s inside TableRegion %s to hold TextLines",
+                                         tr_id, segment.id)
+                else:
+                    self.logger.warning(
+                        "Skipping TextLine detection on unsupported segment type %s (%s)",
+                        segment.id, segment.__class__.__name__
+                    )
+                    continue
+
+                if parent_region is None:
+                    self.logger.warning(
+                        "Could not determine parent TextRegion for TextLine in segment %s (%s) – skipping",
+                        segment.id, segment.__class__.__name__
+                    )
+                    continue
+
+                line_no += 1
+                line_id = f'{parent_region.id}_line_{line_no:04d}'
+                line = TextLineType(id=line_id, Coords=region_coords)
+
+                if len(cat) > 1:
+                    line.set_custom(cat[1])
+
+                parent_region.add_TextLine(line)
+                self.logger.info("Added TextLine %s to %s", line_id, parent_region.id)
+                continue
+
+            #
+            # Region case
+            #
             cat2class = {
                 'AdvertRegion': AdvertRegionType,
                 'ChartRegion': ChartRegionType,
@@ -479,9 +576,6 @@ class Yolo2Segment(Processor):
                 'TextRegion': TextRegionType,
                 'UnknownRegion': UnknownRegionType,
             }
-
-            cat = category.split(':')
-            self.logger.info("Category split: %s -> %s", category, cat)
 
             try:
                 regiontype = cat2class[cat[0]]
@@ -520,13 +614,11 @@ class Yolo2Segment(Processor):
             getattr(segment, add_method)(region)
 
             self.logger.info("=== Completed iteration %d/%d ===", idx + 1, len(masks))
-
             self.logger.info("Detected %s region%04d (p=%.2f) on %s '%s'",
                              category, region_no, score, segtype, segment.id)
 
         # Debug visualization if requested
         if self.parameter.get('debug_img') != 'none':
-            # Create visualization
             vis_img = array_raw.copy()
             for mask, class_id in zip(masks, classes):
                 color = np.random.randint(0, 255, 3).tolist()

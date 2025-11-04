@@ -6,16 +6,16 @@
         "ocrd-yolo-segment": {
             "executable": "ocrd-yolo-segment",
             "categories": ["Layout analysis"],
-            "steps": ["layout/segmentation/region"],
+            "steps": ["layout/segmentation/region", "layout/segmentation/line"],
             "description": "Detect regions with YOLOv11 models",
             "input_file_grp_cardinality": 1,
             "output_file_grp_cardinality": 1,
             "parameters": {
-                "operation_level": {
+                "level-of-operation": {
                     "type": "string",
-                    "enum": ["page", "table"],
+                    "enum": ["page", "table", "region"],
                     "default": "page",
-                    "description": "hierarchy level which to predict and assign regions for"
+                    "description": "segment hierarchy level to operate on (page into regions, or regions/tables into lines or regions)"
                 },
                 "categories": {
                     "type": "array",
