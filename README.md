@@ -49,7 +49,7 @@ ocrd-yolo-segment \
     -p '{
         "model_weights": "yolo11s-table.pt",
         "categories": ["TextRegion:columns", "TextRegion:header"],
-        "operation_level": "table",
+        "level-of-operation": "table",
         "min_confidence": 0.7
     }'
 ```
@@ -62,7 +62,7 @@ ocrd-yolo-segment \
 
 - `model_weights` (string, required): Path to YOLOv11 model weights
 - `categories` (array, required): Maps model classes to PAGE-XML region types
-- `operation_level` (string, default: "page"): "page" or "table" level processing
+- `level-of-operation` (string, default: "page"): "page" or "table" level processing
 - `min_confidence` (float, default: 0.5): Detection confidence threshold
 - `postprocessing` (string, default: "full"): Post-processing mode
   - "full": NMS + morphological operations
