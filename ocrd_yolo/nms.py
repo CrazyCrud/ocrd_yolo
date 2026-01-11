@@ -1,3 +1,6 @@
+# @ai-generated model="gpt-4.5,claude opus 4.5"
+
+
 import multiprocessing as mp
 import multiprocessing.sharedctypes  # Add this line!
 import ctypes

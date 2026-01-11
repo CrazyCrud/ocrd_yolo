@@ -200,3 +200,8 @@ Enable debug visualization to see all detections:
 ```bash
 -p '{"debug_img": "visualize"}'
 ```
+
+## Remark
+ChatGPT 4.5 as well as Claude Opus 4.5 have been used to generate this OCR-D extension.
+At the beginning, the detectron2 extension was used as an example: github.com/bertsky/ocrd_detectron2
+Generated code has been manually tested and iteratively improved using the listed models.

@@ -1,3 +1,6 @@
+# @ai-generated model="gpt-4.5,claude opus 4.5"
+
+
 from __future__ import absolute_import
 
 import cv2

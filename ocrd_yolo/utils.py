@@ -1,3 +1,6 @@
+# @ai-generated model="gpt-4.5,claude opus 4.5"
+
+
 import numpy as np
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
