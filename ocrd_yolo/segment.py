@@ -1,4 +1,4 @@
-# @ai-generated model="gpt-4.5,claude opus 4.5"
+# @ai-generated model="gpt-4.5,gpt-5.0,gpt-5.1,gpt-5.2,claude opus 4.5"
 
 
 from __future__ import absolute_import
@@ -263,7 +263,7 @@ class Yolo2Segment(Processor):
         )
         # Run YOLO inference
         pil = Image.fromarray(array_raw)
-        results = self.model(pil, conf=self.min_confidence, verbose=False)
+        results = self.model(pil, conf=self.min_confidence, iou=0.7, verbose=False)
 
         n_boxes = len(results[0].boxes or [])
         n_masks = len(getattr(results[0], 'masks', []) or [])

@@ -1,4 +1,4 @@
-# @ai-generated model="gpt-4.5,claude opus 4.5"
+# @ai-generated model="gpt-4.5,gpt-5.0,gpt-5.1,gpt-5.2,claude opus 4.5"
 
 
 import numpy as np
