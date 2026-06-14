@@ -27,7 +27,6 @@ services:
     stdin_open: true
     tty: true
 
-  # CPU-only version for testing
   ocrd-yolo-cpu:
     build:
       context: .

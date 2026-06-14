@@ -1,5 +1,5 @@
 # @ai-generated model="gpt-4.5,claude opus 4.5"
-
+# YOLOv26 adaption has been done manually
 
 from __future__ import absolute_import
 
@@ -13,11 +13,9 @@ from ultralytics import YOLO
 from shapely.geometry import Polygon
 
 from ocrd_utils import (
-    getLogger,
     coordinates_of_segment,
     coordinates_for_segment,
     points_from_polygon,
-    polygon_from_points
 )
 from ocrd_models.ocrd_page import (
     OcrdPage,
@@ -54,14 +52,13 @@ from .utils import polygon_for_parent, _ensure_consistent_crops
 
 
 class Yolo2Segment(Processor):
-    max_workers = 1  # GPU context sharable across not forks
+    max_workers = 1
 
     @property
     def executable(self):
         return 'ocrd-yolo-segment'
 
     def setup(self):
-        # Device selection
         if self.parameter['device'] == 'cpu' or not torch.cuda.is_available():
             device = "cpu"
         else:
@@ -71,7 +68,7 @@ class Yolo2Segment(Processor):
         # Load model
         model_weights = self.parameter['model_weights']
 
-        # Try to resolve as resource first, then as regular file
+        # Try to resolve as resource first
         try:
             model_weights = self.resolve_resource(model_weights)
         except Exception:
@@ -84,39 +81,37 @@ class Yolo2Segment(Processor):
         self.model = YOLO(model_weights)
         self.model.to(device)
 
-        # Parameters
+        # Get parameters
         self.min_confidence = float(self.parameter.get('min_confidence', 0.5))
         self.categories = self.parameter['categories']
+        self.use_yolo26 = self.parameter['nms_free']
 
         # Validate categories match model classes
         model_classes = self.model.model.names if hasattr(self.model.model, 'names') else {}
         self.logger.info(f"Model has {len(model_classes)} classes")
 
     def process_page_pcgts(self, *input_pcgts: Optional[OcrdPage], page_id: Optional[str] = None) -> OcrdPageResult:
-        """Use YOLO to segment each page.
+        """
+        Use YOLO to segment each page.
 
         `level-of-operation` controls where we operate:
           - "page":   on the full page
           - "table":  inside existing TableRegions
           - "region": inside existing TextRegions
-
-        For backwards-compatibility, `operation_level` is still accepted as an alias.
         """
+
         pcgts = input_pcgts[0]
         result = OcrdPageResult(pcgts)
 
-        # Backwards-compatible: prefer `level-of-operation` if given,
-        # otherwise fall back to your original `operation_level`.
-        level = self.parameter.get(
-            'level-of-operation',
-            self.parameter.get('operation_level', 'page')
-        )
+        level = self.parameter.get('level-of-operation')
 
         page = pcgts.get_Page()
         page_image_raw, page_coords, page_image_info = self.workspace.image_from_page(
             page, page_id, feature_filter='raw')
 
-        # For morphological post-processing, we need the binarized image
+        self.parameter['postprocessing'] = 'none' if self.use_yolo26 else self.parameter['postprocessing']
+
+        # For morphological post-processing, a binarized image is needed
         if self.parameter['postprocessing'] != 'none':
             try:
                 page_image_bin, _, _ = self.workspace.image_from_page(
@@ -124,7 +119,6 @@ class Yolo2Segment(Processor):
                 page_image_raw, page_image_bin = _ensure_consistent_crops(
                     page_image_raw, page_image_bin)
             except Exception:
-                # If no binarized version exists, create one from raw
                 self.logger.warning("No binarized image found, creating from raw image")
                 page_image_bin = page_image_raw.convert('L').point(
                     lambda x: 0 if x < 128 else 255, '1'
@@ -153,16 +147,13 @@ class Yolo2Segment(Processor):
             else:
                 zoomed = 1.0
         elif resize_mode == 'fixed':
-            # Resize to specific size (e.g., 1024x1024)
+            # Resize to specific size
             target_size = self.parameter.get('target_size', 1024)
             zoomed = target_size / max(page_image_raw.width, page_image_raw.height)
         else:
             self.logger.warning("Unknown resize_mode '%s', falling back to 'none'", resize_mode)
             zoomed = 1.0
 
-        #
-        # NEW: decide which segments to process, Kraken-style
-        #
         if level == 'page':
             segments = [page]
         elif level == 'table':
@@ -170,7 +161,7 @@ class Yolo2Segment(Processor):
             if not segments:
                 self.logger.warning("No existing TableRegions on page '%s'", page_id)
         elif level in ('region', 'text-region'):
-            # "region" meaning TextRegions (like ocrd-kraken's level-of-operation=region)
+            # TextRegions
             segments = page.get_AllRegions(depth=1, classes=['Text'])
             if not segments:
                 self.logger.warning("No existing TextRegions on page '%s'", page_id)
@@ -178,7 +169,7 @@ class Yolo2Segment(Processor):
             raise ValueError(f"Unknown level-of-operation / operation_level: {level}")
 
         for segment in segments:
-            # Get existing regions *under this segment* (for NMS / masking etc)
+            # Get existing regions for NMS or masking
             def at_segment(region):
                 return region.parent_object_ is segment
 
@@ -205,7 +196,7 @@ class Yolo2Segment(Processor):
                 else:
                     image_bin = image_raw
 
-            # Ensure RGB / binary formats
+            # Ensure RGB or binary formats
             if image_raw.mode == '1':
                 image_raw = image_raw.convert('L')
             image_raw = image_raw.convert(mode='RGB')
@@ -227,8 +218,7 @@ class Yolo2Segment(Processor):
             array_bin = np.array(image_bin)
             array_bin = ~array_bin  # Invert for processing
 
-            # Pass `level` through so _process_segment can, if needed,
-            # distinguish page/table/region behaviour.
+            # Pass `level` through so _process_segment can distinguish page/table/region behaviour
             image = self._process_segment(
                 segment, regions, coords,
                 array_raw, array_bin, zoomed,
@@ -261,9 +251,13 @@ class Yolo2Segment(Processor):
             "Feeding YOLO: array_raw shape=%s, dtype=%s",
             array_raw.shape, array_raw.dtype
         )
-        # Run YOLO inference
+
+        # Run YOLO inference and set end2end to false if using older YOLO models
         pil = Image.fromarray(array_raw)
-        results = self.model(pil, conf=self.min_confidence, verbose=False)
+        if self.use_yolo26:
+            results = self.model(pil, conf=self.min_confidence, verbose=False)
+        else:
+            results = self.model(pil, conf=self.min_confidence, verbose=False, end2end=False)
 
         n_boxes = len(results[0].boxes or [])
         n_masks = len(getattr(results[0], 'masks', []) or [])
@@ -286,42 +280,49 @@ class Yolo2Segment(Processor):
         result = results[0]
         boxes = result.boxes
 
-        # Try to get masks, but prepare box fallback
-        use_boxes_as_masks = True  # self.parameter.get('use_boxes_as_masks', False)
-        masks = None
-
-        if hasattr(result, 'masks') and result.masks is not None and not use_boxes_as_masks:
-            masks = result.masks.data.cpu().numpy()
-
-        # Create masks from bounding boxes if needed
-        if use_boxes_as_masks or masks is None:
-            self.logger.info("Using bounding boxes to create masks")
-            masks = []
-            for box in boxes:
-                # Get box coordinates (xyxy format)
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-
-                # Create mask from box
-                mask = np.zeros((height, width), dtype=np.uint8)
-                x1, x2 = int(x1 * width / result.orig_shape[1]), int(x2 * width / result.orig_shape[1])
-                y1, y2 = int(y1 * height / result.orig_shape[0]), int(y2 * height / result.orig_shape[0])
-
-                margin = 5  # pixels
-                x1, y1, x2, y2 = max(0, x1 - margin), max(0, y1 - margin), min(width, x2 + margin), min(height,
-                                                                                                        y2 + margin)
-                mask[y1:y2, x1:x2] = 1
-                masks.append(mask > 0)
-
-            masks = np.array(masks)
-            self.logger.info("Created %d masks from boxes", len(masks))
+        if self.use_yolo26:
+            if hasattr(result, 'masks') and result.masks is not None:
+                masks = result.masks.data.cpu().numpy()  # Shape: (N, H, W)
+            else:
+                self.logger.info("YOLO26 model does not output masks, falling back to boxes")
+                masks = []
+                for box in boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    mask = np.zeros((height, width), dtype=np.uint8)
+                    x1, x2 = int(x1 * width / result.orig_shape[1]), int(x2 * width / result.orig_shape[1])
+                    y1, y2 = int(y1 * height / result.orig_shape[0]), int(y2 * height / result.orig_shape[0])
+                    margin = 5
+                    x1, y1, x2, y2 = max(0, x1 - margin), max(0, y1 - margin), min(width, x2 + margin), min(height, y2 + margin)
+                    mask[y1:y2, x1:x2] = 1
+                    masks.append(mask > 0)
+                masks = np.array(masks)
         else:
-            if masks.shape[1:] != (height, width):
-                masks_resized = []
-                for mask in masks:
-                    mask_resized = cv2.resize(mask.astype(np.uint8), (width, height),
-                                              interpolation=cv2.INTER_NEAREST)
-                    masks_resized.append(mask_resized > 0.5)
-                masks = np.array(masks_resized)
+            use_boxes_as_masks = self.parameter.get('use_boxes_as_masks', False)
+            masks = None
+            if hasattr(result, 'masks') and result.masks is not None and not use_boxes_as_masks:
+                masks = result.masks.data.cpu().numpy()
+            
+            if use_boxes_as_masks or masks is None:
+                self.logger.info("Using bounding boxes to create masks")
+                masks = []
+                for box in boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    mask = np.zeros((height, width), dtype=np.uint8)
+                    x1, x2 = int(x1 * width / result.orig_shape[1]), int(x2 * width / result.orig_shape[1])
+                    y1, y2 = int(y1 * height / result.orig_shape[0]), int(y2 * height / result.orig_shape[0])
+                    margin = 5
+                    x1, y1, x2, y2 = max(0, x1 - margin), max(0, y1 - margin), min(width, x2 + margin), min(height, y2 + margin)
+                    mask[y1:y2, x1:x2] = 1
+                    masks.append(mask > 0)
+                masks = np.array(masks)
+            else:
+                if masks.shape[1:] != (height, width):
+                    masks_resized = []
+                    for mask in masks:
+                        mask_resized = cv2.resize(mask.astype(np.uint8), (width, height),
+                                                  interpolation=cv2.INTER_NEAREST)
+                        masks_resized.append(mask_resized > 0.5)
+                    masks = np.array(masks_resized)
 
         scores = boxes.conf.cpu().numpy()
         classes = boxes.cls.cpu().numpy().astype(int)
@@ -369,7 +370,7 @@ class Yolo2Segment(Processor):
             masks = masks[1:]
 
         detect_page_border = True
-        # Convert masks to regions / lines
+        # Convert masks to regions or lines
         region_no = 0
         line_no = 0
 
@@ -407,69 +408,61 @@ class Yolo2Segment(Processor):
                     continue
                 self.logger.info("Processing page boundary (score=%.3f)", score)
 
-                # Apply morphological closing to clean up the mask
-                mask_uint8 = mask.astype(np.uint8)
-                border_kernel_size = max(10, scale // 2)
-                kernel = np.ones((border_kernel_size, border_kernel_size), np.uint8)
-                mask_closed = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
-
-                # Find contours
-                contours, _ = cv2.findContours(mask_closed,
-                                               cv2.RETR_EXTERNAL,
-                                               cv2.CHAIN_APPROX_SIMPLE)
-
-                if contours:
-                    # For page boundary, we want the convex hull of all contours
-                    all_points = np.concatenate(contours)
-                    hull = cv2.convexHull(all_points)
-
-                    # Convert to page coordinates
-                    page_polygon = hull[:, 0, :]  # x,y order
-                    if zoomed != 1.0:
-                        page_polygon = page_polygon / zoomed
-
-                    # Transform to page coordinate system
-                    page_polygon = coordinates_for_segment(page_polygon, None, coords)
-
-                    # Create Border element
-                    border_coords = CoordsType(points_from_polygon(page_polygon), conf=score)
-                    border = BorderType(Coords=border_coords)
-                    segment.set_Border(border)
-
-                    self.logger.info("Set page Border from 'page' detection (conf=%.3f)", score)
+                if self.use_yolo26:
+                    border_contour_xy = result.masks.xy[idx].cpu().numpy()
+                    page_polygon = border_contour_xy.astype(np.float32)
                 else:
-                    self.logger.warning("Could not extract page boundary contour")
+                    mask_uint8 = mask.astype(np.uint8)
+                    border_kernel_size = max(10, scale // 2)
+                    kernel = np.ones((border_kernel_size, border_kernel_size), np.uint8)
+                    mask_closed = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
+                    
+                    contours, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if not contours:
+                        self.logger.warning("Could not extract page boundary contour")
+                        continue
+                    all_points = np.concatenate(contours)
+                    page_polygon = cv2.convexHull(all_points)[:, 0, :]
+
+                page_polygon = coordinates_for_segment(page_polygon, None, coords)
+
+                # Create Border element
+                border_coords = CoordsType(points_from_polygon(page_polygon), conf=score)
+                border = BorderType(Coords=border_coords)
+                segment.set_Border(border)
+                self.logger.info("Set page Border from 'page' detection (conf=%.3f)", score)
 
                 # Skip creating a region for this
                 continue
 
-            # Morphological cleanup of the mask
-            mask_uint8 = mask.astype(np.uint8)
-            kernel_size = max(3, min(scale // 5, 15))
-            if kernel_size % 2 == 0:
-                kernel_size += 1
-            kernel = np.ones((kernel_size, kernel_size), np.uint8)
-            mask_closed = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
-            mask = mask_closed > 0
+            if self.use_yolo26:
+                # See https://docs.ultralytics.com/guides/isolating-segmentation-objects#recipe-walkthrough 
+                contour_xy = result.masks.xy[idx].cpu().numpy()
+                raw_contour = contour_xy.astype(np.float32)
+            else:
+                mask_uint8 = mask.astype(np.uint8)
+                kernel_size = max(3, min(scale // 5, 15))
+                if kernel_size % 2 == 0:
+                    kernel_size += 1
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                mask_closed = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
+                mask = mask_closed > 0
 
-            # Find contours while iterating 10 times to merge them
-            invalid = True
-            contours = []
-            for _ in range(10):
-                contours, _ = cv2.findContours(mask.astype(np.uint8),
-                                               cv2.RETR_EXTERNAL,
-                                               cv2.CHAIN_APPROX_SIMPLE)
-                if len(contours) == 1 and len(contours[0]) > 3:
-                    invalid = False
-                    break
-                mask = cv2.dilate(mask.astype(np.uint8),
-                                  np.ones((scale, scale), np.uint8)) > 0
+                invalid = True
+                contours = []
+                for _ in range(10):
+                    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if len(contours) == 1 and len(contours[0]) > 3:
+                        invalid = False
+                        break
+                    mask = cv2.dilate(mask.astype(np.uint8), np.ones((scale, scale), np.uint8)) > 0
 
-            if invalid:
-                self.logger.warning("Ignoring non-contiguous (%d) region for %s", len(contours), category)
-                continue
+                if invalid:
+                    self.logger.warning("Ignoring non-contiguous (%d) region for %s", len(contours), category)
+                    continue
+                raw_contour = contours[0][:, 0, :]
 
-            raw_contour = contours[0][:, 0, :]  # x,y order
+
             if zoomed != 1.0:
                 raw_contour = raw_contour / zoomed
 
@@ -516,19 +509,19 @@ class Yolo2Segment(Processor):
                 parent_region = None
 
                 if isinstance(segment, TextRegionType):
-                    # Normal case: we are running on a TextRegion
+                    # Normal case running on a TextRegion
                     parent_region = segment
 
                 elif isinstance(segment, TableRegionType):
-                    # We are running at table level (level-of-operation = 'table').
-                    # Create or reuse a TextRegion inside the TableRegion to hold lines.
+                    # Table level
+                    # Create or reuse a TextRegion inside the TableRegion to hold lines
                     existing_text_regions = segment.get_TextRegion() or []
                     if existing_text_regions:
                         parent_region = existing_text_regions[0]
                     else:
                         # Create one container TextRegion for all lines in this table
                         tr_id = f'{segment.id}_textregion'
-                        # Use the table's Coords as the container region's Coords
+                        # Use the table's Coords as the region's Coords
                         tr_coords = segment.get_Coords() or region_coords
                         parent_region = TextRegionType(id=tr_id, Coords=tr_coords)
                         segment.add_TextRegion(parent_region)
@@ -559,9 +552,6 @@ class Yolo2Segment(Processor):
                 self.logger.info("Added TextLine %s to %s", line_id, parent_region.id)
                 continue
 
-            #
-            # Region case
-            #
             cat2class = {
                 'AdvertRegion': AdvertRegionType,
                 'ChartRegion': ChartRegionType,
@@ -589,7 +579,7 @@ class Yolo2Segment(Processor):
             region_id = f'region{region_no:04d}_{cat[0]}'
             region = regiontype(id=region_id, Coords=region_coords)
 
-            # Set subtype if specified
+            # Set subtype
             if len(cat) > 1:
                 try:
                     subtype_map = {
@@ -598,7 +588,7 @@ class Yolo2Segment(Processor):
                         ChartRegionType: ChartTypeSimpleType
                     }
                     if regiontype in subtype_map:
-                        subtype_map[regiontype](cat[1])
+                        # subtype_map[regiontype](cat[1])
                         region.set_type(cat[1])
                     else:
                         region.set_custom(cat[1])

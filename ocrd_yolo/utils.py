@@ -5,35 +5,11 @@ import numpy as np
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 from ocrd_utils import (
-    resource_filename,
-    getLogger,
-    pushd_popd,
-    coordinates_of_segment,
-    coordinates_for_segment,
     crop_image,
-    points_from_polygon,
     polygon_from_points,
 )
 from ocrd_models.ocrd_page import (
-    OcrdPage,
-    PageType,
-    AdvertRegionType,
-    ChartRegionType,
-    ChemRegionType,
-    CustomRegionType,
-    GraphicRegionType,
-    ImageRegionType,
-    LineDrawingRegionType,
-    MapRegionType,
-    MathsRegionType,
-    MusicRegionType,
-    NoiseRegionType,
-    SeparatorRegionType,
-    TableRegionType,
-    TextRegionType,
-    UnknownRegionType,
-    CoordsType,
-    AlternativeImageType
+    PageType
 )
 
 

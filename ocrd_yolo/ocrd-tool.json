@@ -51,15 +51,15 @@
                     "type": "string",
                     "default": "cuda",
                     "description": "select computing device for PyTorch (e.g. cpu or cuda:0); will fall back to CPU if no GPU is available"
+                },
+                "nms_free": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "use new YOLOv26 models"
                 }
             },
             "resources": [
-                {
-                    "name": "yolo11n.pt",
-                    "url": "https://huggingface.co/Ultralytics/YOLO11/resolve/365ed86341e7a7456dbc4cafc09f138814ce9ff1/yolo11n.pt",
-                    "size": 5600,
-                    "description": "YOLOv11-nano segmentation model weights"
-                }
+
             ]
         }
     }

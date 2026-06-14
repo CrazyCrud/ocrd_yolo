@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ocrd-yolo"
 version = "0.1.0"
-description = "OCR-D processor for YOLOv11 region segmentation (layout analysis)"
+description = "OCR-D processor for YOLO region segmentation (layout analysis)"
 authors = [{ name = "Constantin Lehenmeier", email = "info@constantinlehenmeier.de" }]
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.8"
-keywords = ["OCR", "OCR-D", "layout-analysis", "YOLO", "YOLOv11", "segmentation"]
+keywords = ["OCR", "OCR-D", "layout-analysis", "YOLO", "YOLOv26", "segmentation"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
