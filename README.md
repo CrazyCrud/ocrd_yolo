@@ -202,6 +202,6 @@ Enable debug visualization to see all detections:
 ```
 
 ## Remark
-ChatGPT 4.5, 5 as well as Claude Opus 4.5 have been used to generate this OCR-D extension.
+ChatGPT 4.5, 5 as well as Claude Opus 4.5 and Qwen 3.5 397B A17B have been used to generate this OCR-D extension.
 At the beginning, the detectron2 extension was used as an example: github.com/bertsky/ocrd_detectron2
 Generated code has been manually tested and iteratively improved using the listed models.

@@ -1,5 +1,4 @@
-# @ai-generated model="gpt-4.5,claude opus 4.5"
-# YOLOv26 adaption has been done manually
+# @ai-generated model="gpt-4.5,claude opus 4.5,qwen 3.5 397B A17B,"
 
 from __future__ import absolute_import
 
@@ -282,7 +281,6 @@ class Yolo2Segment(Processor):
         # Extract detections from YOLO results
         result = results[0]
         boxes = result.boxes
-
         self.logger.info("result.masks.xy length = %d", len(result.masks.xy) if hasattr(result, 'masks') else 0)
 
         # Get the masks or boxes if no mask have been found
@@ -389,6 +387,9 @@ class Yolo2Segment(Processor):
 
             self.logger.info("Processing non-border region: %s", category)
 
+            self.logger.info(f"YOLO orig_shape: {result.orig_shape}, mask xy shape: {result.masks.xy[idx].shape}")
+            self.logger.info(f"Image shape after resize: {array_raw.shape[:2]}")
+
             # Special handling for page class
             if category.startswith('Border') and isinstance(segment, PageType):
                 if not detect_page_border or level != 'page':
@@ -465,26 +466,32 @@ class Yolo2Segment(Processor):
                 raw_contour = contours[0][:, 0, :].astype(np.float32)
                 source = "fallback contour"
 
-            self.logger.info(
-                "Detection %d – %s – raw polygon (%d points, first 10): %s",
-                idx, source, len(raw_contour), raw_contour[:10].tolist()
-            )
+            self.logger.info(f"Detection {idx} based on {source}: raw polygon ({len(raw_contour)} points, first 10): {raw_contour[:10].tolist()}")
+            self.logger.info(f"raw_contour bounds: x=[{raw_contour[:,0].min():.1f}, {raw_contour[:,0].max():.1f}], " f"y=[{raw_contour[:,1].min():.1f}, {raw_contour[:,1].max():.1f}]")
+            self.logger.info(f"Image dimensions: {width}x{height}, zoomed: {zoomed}")
+            self.logger.info(f"coords transform: {coords['transform']}")
 
-            if self.parameter.get('debug_img') == 'visualize':
-                debug_img = array_raw.copy()
+            if self.parameter.get('debug_img') != 'none':
+                vis_img = array_raw.copy()
                 pts = raw_contour.astype(np.int32)
-                cv2.polylines(debug_img, [pts], isClosed=True, color=(0,255,0), thickness=2)
-                cv2.imwrite(f"/tmp/debug_polygon_{segment.id}_{idx}.png", debug_img)
+                cv2.polylines(vis_img, [pts], isClosed=True, color=(0,255,0), thickness=2)
+                cv2.imwrite(f"/tmp/debug_polygon_{segment.id}_{idx}.png", vis_img)
 
             if zoomed != 1.0:
                 raw_contour = raw_contour / zoomed
 
             # Map into page coords
+            # Using Qwen 3.5 397B A17B, it was discovered that polygon_for_parent removes too many points from the polygons.
             page_poly = coordinates_for_segment(raw_contour, None, coords)
-            page_poly = polygon_for_parent(page_poly, segment)
-            if page_poly is None:
-                self.logger.warning("Ignoring clipped-away region for %s", category)
-                continue
+            if level != 'page':
+                page_poly = polygon_for_parent(page_poly, segment)
+                if page_poly is None:
+                    self.logger.warning("Ignoring clipped-away region for %s", category)
+                    continue
+                self.logger.info(f"After polygon_for_parent: {len(page_poly)} points")
+            else:
+                self.logger.info("Skipping polygon_for_parent (page level - coords already absolute)")
+                page_poly = np.array(page_poly, dtype=np.float32)
 
             # Build a Shapely polygon and compute its convex hull
             poly = Polygon(page_poly)
@@ -492,12 +499,17 @@ class Yolo2Segment(Processor):
                 poly = poly.convex_hull
 
             # Add buffer and simplify
-            poly = poly.buffer(1.0)
-            poly = poly.simplify(tolerance=1.0, preserve_topology=True)
+            if use_boxes_as_masks:
+                poly = poly.buffer(1.0)
+                poly = poly.simplify(tolerance=1.0, preserve_topology=True)
 
             # Extract the exterior coords (drop the closing point)
             smoothed_coords = list(poly.exterior.coords)[:-1]
+            self.logger.info(f"Final polygon: {len(smoothed_coords)} points")
 
+            self.logger.info(f"Points being written to PageXML: {len(smoothed_coords)}")
+            self.logger.info(f"First 5 points: {smoothed_coords[:5]}")
+            self.logger.info(f"Last 5 points: {smoothed_coords[-5:]}")
             # Create CoordsType from the smoothed polygon
             region_coords = CoordsType(
                 points_from_polygon(smoothed_coords),
