@@ -84,7 +84,6 @@ class Yolo2Segment(Processor):
         # Get parameters
         self.min_confidence = float(self.parameter.get('min_confidence', 0.5))
         self.categories = self.parameter['categories']
-        self.use_yolo26 = self.parameter['yolo26']
         self.postprocessing = self.parameter['postprocessing']
 
         # Validate categories match model classes
@@ -250,14 +249,18 @@ class Yolo2Segment(Processor):
             array_raw.shape, array_raw.dtype
         )
 
+        use_end2end = False
+        if hasattr(self.model.model, "end2end"):
+            use_end2end = bool(self.model.model.end2end)
+
         # Run YOLO inference and set end2end to false if using older YOLO models
         pil = Image.fromarray(array_raw)
-        if self.use_yolo26:
+        if use_end2end:
             self.logger.info("Use YOLO end2end")
-            results = self.model(pil, conf=self.min_confidence, verbose=False)
         else:
             self.logger.info("Use YOLO without end2end (old behaviour)")
-            results = self.model(pil, conf=self.min_confidence, verbose=False, end2end=False)
+        
+        results = self.model(pil, conf=self.min_confidence, verbose=False, end2end=use_end2end)
 
         n_boxes = len(results[0].boxes or [])
         n_masks = len(getattr(results[0], 'masks', []) or [])
@@ -283,15 +286,11 @@ class Yolo2Segment(Processor):
         self.logger.info("result.masks.xy length = %d", len(result.masks.xy) if hasattr(result, 'masks') else 0)
 
         # Get the masks or boxes if no mask have been found
-        use_boxes_as_masks = self.parameter.get('use_boxes_as_masks', False)
+        use_boxes_as_masks = self.parameter.get('use_boxes_as_masks', True)
         masks = None
         # Get masks if boxes shouldn't be used
         if hasattr(result, 'masks') and result.masks is not None and not use_boxes_as_masks:
-            if self.use_yolo26:
-                # masks = result.masks.data
-                masks = result.masks.data.cpu().numpy()
-            else:
-                masks = result.masks.data.cpu().numpy()
+            masks = result.masks.data.cpu().numpy()
             
         if use_boxes_as_masks or masks is None:
             self.logger.info("Using bounding boxes to create masks")
@@ -402,7 +401,7 @@ class Yolo2Segment(Processor):
                 self.logger.info("Processing page boundary (score=%.3f)", score)
 
                 # Newer YOLO models should already return closed contours
-                if idx < len(result.masks.xy):
+                if idx < len(result.masks.xy) and not use_boxes_as_masks:
                     border_contour_xy = result.masks.xy[idx]
                     page_polygon = border_contour_xy.astype(np.float32)
                 else:
@@ -438,7 +437,7 @@ class Yolo2Segment(Processor):
             
             # Create contours
             # Newer YOLO models should already return closed contours
-            if idx < len(result.masks.xy):
+            if idx < len(result.masks.xy) and not use_boxes_as_masks:
                 raw_contour = result.masks.xy[idx].astype(np.float32)   # (P, 2)
                 source = "model polygon"
             else:
@@ -493,10 +492,8 @@ class Yolo2Segment(Processor):
                 poly = poly.convex_hull
 
             # Add buffer and simplify
-            """
-            poly = poly.buffer(5.0)
+            poly = poly.buffer(1.0)
             poly = poly.simplify(tolerance=1.0, preserve_topology=True)
-            """
 
             # Extract the exterior coords (drop the closing point)
             smoothed_coords = list(poly.exterior.coords)[:-1]

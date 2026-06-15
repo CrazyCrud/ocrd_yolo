@@ -54,13 +54,8 @@
                 },
                 "use_boxes_as_masks": {
                     "type": "boolean",
-                    "default": false,
+                    "default": true,
                     "description": "use boxes instead of masks"
-                },
-                "yolo26": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "use new YOLOv26 models"
                 }
             },
             "resources": [
