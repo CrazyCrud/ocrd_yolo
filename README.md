@@ -70,6 +70,7 @@ ocrd-yolo-segment \
   - "only-morph": Only morphological operations
   - "none": No post-processing
 - `debug_img` (string, default: "none"): Debug visualization
+- `use_boxes_as_masks` (boolean, default: true): Use boxes instead of masks
 - `device` (string, default: "cuda"): Computing device
 
 ## Training Custom Models
