@@ -77,14 +77,15 @@ class Yolo2Segment(Processor):
             if not os.path.exists(model_weights):
                 raise FileNotFoundError(f"Model file not found: {model_weights}")
 
-        self.logger.info("Loading YOLOv11 weights from %s", model_weights)
+        self.logger.info("Loading YOLO weights from %s", model_weights)
         self.model = YOLO(model_weights)
         self.model.to(device)
 
         # Get parameters
         self.min_confidence = float(self.parameter.get('min_confidence', 0.5))
         self.categories = self.parameter['categories']
-        self.use_yolo26 = self.parameter['nms_free']
+        self.use_yolo26 = self.parameter['yolo26']
+        self.postprocessing = self.parameter['postprocessing']
 
         # Validate categories match model classes
         model_classes = self.model.model.names if hasattr(self.model.model, 'names') else {}
@@ -109,10 +110,8 @@ class Yolo2Segment(Processor):
         page_image_raw, page_coords, page_image_info = self.workspace.image_from_page(
             page, page_id, feature_filter='raw')
 
-        self.parameter['postprocessing'] = 'none' if self.use_yolo26 else self.parameter['postprocessing']
-
         # For morphological post-processing, a binarized image is needed
-        if self.parameter['postprocessing'] != 'none':
+        if self.postprocessing != 'none':
             try:
                 page_image_bin, _, _ = self.workspace.image_from_page(
                     page, page_id, feature_selector='binarized')
@@ -182,7 +181,7 @@ class Yolo2Segment(Processor):
             else:
                 image_raw, coords = self.workspace.image_from_segment(
                     segment, page_image_raw, page_coords, feature_filter='raw')
-                if self.parameter['postprocessing'] != 'none':
+                if self.postprocessing != 'none':
                     try:
                         image_bin, _ = self.workspace.image_from_segment(
                             segment, page_image_bin, page_coords)
@@ -234,11 +233,10 @@ class Yolo2Segment(Processor):
         segtype = segment.__class__.__name__[:-4]
         segment.set_custom('coords=%s' % coords['transform'])
         height, width = array_raw.shape[:2]
-        postprocessing = self.parameter['postprocessing']
 
         # Estimate scale for morphological operations
         scale = 43
-        if postprocessing in ['full', 'only-morph']:
+        if self.postprocessing in ['full', 'only-morph']:
             _, components = cv2.connectedComponents(array_bin.astype(np.uint8))
             _, counts = np.unique(components, return_counts=True)
             if counts.shape[0] > 1:
@@ -255,8 +253,10 @@ class Yolo2Segment(Processor):
         # Run YOLO inference and set end2end to false if using older YOLO models
         pil = Image.fromarray(array_raw)
         if self.use_yolo26:
+            self.logger.info("Use YOLO end2end")
             results = self.model(pil, conf=self.min_confidence, verbose=False)
         else:
+            self.logger.info("Use YOLO without end2end (old behaviour)")
             results = self.model(pil, conf=self.min_confidence, verbose=False, end2end=False)
 
         n_boxes = len(results[0].boxes or [])
@@ -280,49 +280,42 @@ class Yolo2Segment(Processor):
         result = results[0]
         boxes = result.boxes
 
-        if self.use_yolo26:
-            if hasattr(result, 'masks') and result.masks is not None:
-                masks = result.masks.data.cpu().numpy()  # Shape: (N, H, W)
+        self.logger.info("result.masks.xy length = %d", len(result.masks.xy) if hasattr(result, 'masks') else 0)
+
+        # Get the masks or boxes if no mask have been found
+        use_boxes_as_masks = self.parameter.get('use_boxes_as_masks', False)
+        masks = None
+        # Get masks if boxes shouldn't be used
+        if hasattr(result, 'masks') and result.masks is not None and not use_boxes_as_masks:
+            if self.use_yolo26:
+                # masks = result.masks.data
+                masks = result.masks.data.cpu().numpy()
             else:
-                self.logger.info("YOLO26 model does not output masks, falling back to boxes")
-                masks = []
-                for box in boxes:
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    mask = np.zeros((height, width), dtype=np.uint8)
-                    x1, x2 = int(x1 * width / result.orig_shape[1]), int(x2 * width / result.orig_shape[1])
-                    y1, y2 = int(y1 * height / result.orig_shape[0]), int(y2 * height / result.orig_shape[0])
-                    margin = 5
-                    x1, y1, x2, y2 = max(0, x1 - margin), max(0, y1 - margin), min(width, x2 + margin), min(height, y2 + margin)
-                    mask[y1:y2, x1:x2] = 1
-                    masks.append(mask > 0)
-                masks = np.array(masks)
-        else:
-            use_boxes_as_masks = self.parameter.get('use_boxes_as_masks', False)
-            masks = None
-            if hasattr(result, 'masks') and result.masks is not None and not use_boxes_as_masks:
                 masks = result.masks.data.cpu().numpy()
             
-            if use_boxes_as_masks or masks is None:
-                self.logger.info("Using bounding boxes to create masks")
-                masks = []
-                for box in boxes:
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    mask = np.zeros((height, width), dtype=np.uint8)
-                    x1, x2 = int(x1 * width / result.orig_shape[1]), int(x2 * width / result.orig_shape[1])
-                    y1, y2 = int(y1 * height / result.orig_shape[0]), int(y2 * height / result.orig_shape[0])
-                    margin = 5
-                    x1, y1, x2, y2 = max(0, x1 - margin), max(0, y1 - margin), min(width, x2 + margin), min(height, y2 + margin)
-                    mask[y1:y2, x1:x2] = 1
-                    masks.append(mask > 0)
-                masks = np.array(masks)
-            else:
-                if masks.shape[1:] != (height, width):
-                    masks_resized = []
-                    for mask in masks:
-                        mask_resized = cv2.resize(mask.astype(np.uint8), (width, height),
-                                                  interpolation=cv2.INTER_NEAREST)
-                        masks_resized.append(mask_resized > 0.5)
-                    masks = np.array(masks_resized)
+        if use_boxes_as_masks or masks is None:
+            self.logger.info("Using bounding boxes to create masks")
+            masks = []
+            for box in boxes:
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                mask = np.zeros((height, width), dtype=np.uint8)
+                x1, x2 = int(x1 * width / result.orig_shape[1]), int(x2 * width / result.orig_shape[1])
+                y1, y2 = int(y1 * height / result.orig_shape[0]), int(y2 * height / result.orig_shape[0])
+                # Add static margin to the boxes
+                margin = 3
+                x1, y1, x2, y2 = max(0, x1 - margin), max(0, y1 - margin), min(width, x2 + margin), min(height, y2 + margin)
+                mask[y1:y2, x1:x2] = 1
+                masks.append(mask > 0)
+            masks = np.array(masks)
+        else:
+            # Take masks and resize them based on image width and height, but only when the zoom is not euqal to 1
+            if masks.shape[1:] != (height, width):
+                masks_resized = []
+                for mask in masks:
+                    mask_resized = cv2.resize(mask.astype(np.uint8), (width, height),
+                                                interpolation=cv2.INTER_NEAREST)
+                    masks_resized.append(mask_resized > 0.5)
+                masks = np.array(masks_resized)
 
         scores = boxes.conf.cpu().numpy()
         classes = boxes.cls.cpu().numpy().astype(int)
@@ -338,7 +331,7 @@ class Yolo2Segment(Processor):
             scores = scores[keep_indices]
             classes = classes[keep_indices]
 
-        # Handle existing regions for NMS
+        # Handle existing regions for NMS and prepare the post-processing steps
         if len(ignore) and not isinstance(segment, PageType):
             scores = np.insert(scores, 0, 1.0, axis=0)
             classes = np.insert(classes, 0, -1, axis=0)
@@ -352,18 +345,18 @@ class Yolo2Segment(Processor):
             if np.count_nonzero(mask0):
                 masks[0] = mask0 > 0
 
-        # Apply post-processing
-        if postprocessing in ['full', 'only-nms']:
+        # Apply post-processing on the mask detection
+        if self.postprocessing in ['full', 'only-nms']:
             scores, classes, masks = postprocess_nms(
                 scores, classes, masks, array_bin, self.categories,
                 min_confidence=self.min_confidence, nproc=8, logger=self.logger)
 
-        if postprocessing in ['full', 'only-morph']:
+        if self.postprocessing in ['full', 'only-morph']:
             _, components = cv2.connectedComponents(array_bin.astype(np.uint8))
             scores, classes, masks = postprocess_morph(
                 scores, classes, masks, components, nproc=8, logger=self.logger)
 
-        # Remove placeholder for existing regions
+        # Remove placeholder for existing regions due to NMS step above
         if len(ignore):
             scores = scores[1:]
             classes = classes[1:]
@@ -408,8 +401,9 @@ class Yolo2Segment(Processor):
                     continue
                 self.logger.info("Processing page boundary (score=%.3f)", score)
 
-                if self.use_yolo26:
-                    border_contour_xy = result.masks.xy[idx].cpu().numpy()
+                # Newer YOLO models should already return closed contours
+                if idx < len(result.masks.xy):
+                    border_contour_xy = result.masks.xy[idx]
                     page_polygon = border_contour_xy.astype(np.float32)
                 else:
                     mask_uint8 = mask.astype(np.uint8)
@@ -421,10 +415,17 @@ class Yolo2Segment(Processor):
                     if not contours:
                         self.logger.warning("Could not extract page boundary contour")
                         continue
+
                     all_points = np.concatenate(contours)
                     page_polygon = cv2.convexHull(all_points)[:, 0, :]
 
                 page_polygon = coordinates_for_segment(page_polygon, None, coords)
+                if page_polygon.shape[0] < 3:
+                    self.logger.warning("Border polygon has <3 points")
+                    continue
+
+                if zoomed != 1.0:
+                    page_polygon = page_polygon / zoomed
 
                 # Create Border element
                 border_coords = CoordsType(points_from_polygon(page_polygon), conf=score)
@@ -434,12 +435,14 @@ class Yolo2Segment(Processor):
 
                 # Skip creating a region for this
                 continue
-
-            if self.use_yolo26:
-                # See https://docs.ultralytics.com/guides/isolating-segmentation-objects#recipe-walkthrough 
-                contour_xy = result.masks.xy[idx].cpu().numpy()
-                raw_contour = contour_xy.astype(np.float32)
+            
+            # Create contours
+            # Newer YOLO models should already return closed contours
+            if idx < len(result.masks.xy):
+                raw_contour = result.masks.xy[idx].astype(np.float32)   # (P, 2)
+                source = "model polygon"
             else:
+                # fallback – old contour extraction (kept only for legacy models)
                 mask_uint8 = mask.astype(np.uint8)
                 kernel_size = max(3, min(scale // 5, 15))
                 if kernel_size % 2 == 0:
@@ -460,8 +463,19 @@ class Yolo2Segment(Processor):
                 if invalid:
                     self.logger.warning("Ignoring non-contiguous (%d) region for %s", len(contours), category)
                     continue
-                raw_contour = contours[0][:, 0, :]
+                raw_contour = contours[0][:, 0, :].astype(np.float32)
+                source = "fallback contour"
 
+            self.logger.info(
+                "Detection %d – %s – raw polygon (%d points, first 10): %s",
+                idx, source, len(raw_contour), raw_contour[:10].tolist()
+            )
+
+            if self.parameter.get('debug_img') == 'visualize':
+                debug_img = array_raw.copy()
+                pts = raw_contour.astype(np.int32)
+                cv2.polylines(debug_img, [pts], isClosed=True, color=(0,255,0), thickness=2)
+                cv2.imwrite(f"/tmp/debug_polygon_{segment.id}_{idx}.png", debug_img)
 
             if zoomed != 1.0:
                 raw_contour = raw_contour / zoomed
@@ -479,8 +493,10 @@ class Yolo2Segment(Processor):
                 poly = poly.convex_hull
 
             # Add buffer and simplify
+            """
             poly = poly.buffer(5.0)
             poly = poly.simplify(tolerance=1.0, preserve_topology=True)
+            """
 
             # Extract the exterior coords (drop the closing point)
             smoothed_coords = list(poly.exterior.coords)[:-1]

@@ -52,7 +52,12 @@
                     "default": "cuda",
                     "description": "select computing device for PyTorch (e.g. cpu or cuda:0); will fall back to CPU if no GPU is available"
                 },
-                "nms_free": {
+                "use_boxes_as_masks": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "use boxes instead of masks"
+                },
+                "yolo26": {
                     "type": "boolean",
                     "default": false,
                     "description": "use new YOLOv26 models"
