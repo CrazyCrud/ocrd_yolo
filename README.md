@@ -1,9 +1,9 @@
 # OCR-D wrapper for yolo based on the ocrd_detectron2 wrapper
 
-> YOLOv11-based region segmentation for OCR-D.
+> YOLO-based region segmentation for OCR-D.
 > You can find the ocrd_detectron2 wrapper here: https://github.com/bertsky/ocrd_detectron2/tree/master
 
-This OCR-D processor uses YOLOv11 models to detect and segment document regions in document images.
+This OCR-D processor uses YOLO models to detect and segment document regions in document images.
 
 ## Installation
 
@@ -60,7 +60,7 @@ ocrd-yolo-segment \
 
 ## Parameters
 
-- `model_weights` (string, required): Path to YOLOv11 model weights
+- `model_weights` (string, required): Path to YOLO model weights
 - `categories` (array, required): Maps model classes to PAGE-XML region types
 - `level-of-operation` (string, default: "page"): "page" or "table" level processing
 - `min_confidence` (float, default: 0.5): Detection confidence threshold
@@ -70,6 +70,7 @@ ocrd-yolo-segment \
   - "only-morph": Only morphological operations
   - "none": No post-processing
 - `debug_img` (string, default: "none"): Debug visualization
+- `use_boxes_as_masks` (boolean, default: true): Use boxes instead of masks
 - `device` (string, default: "cuda"): Computing device
 
 ## Training Custom Models
