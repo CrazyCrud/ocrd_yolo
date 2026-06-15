@@ -51,6 +51,8 @@ models/
 test-workspace*/
 test-yolo-*/
 
+runs/
+
 # Documentation build
 docs/_build/
 docs/.doctrees/

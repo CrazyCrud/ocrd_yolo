@@ -1,5 +1,6 @@
 # @ai-generated model="gpt-4.5,claude opus 4.5,qwen 3.5 397B A17B,"
 
+
 from __future__ import absolute_import
 
 import cv2
@@ -62,7 +63,7 @@ class Yolo2Segment(Processor):
             device = "cpu"
         else:
             device = self.parameter['device']
-        self.logger.info("Using device %s", device)
+        self.logger.info(f"Using device {device}")
 
         # Load model
         model_weights = self.parameter['model_weights']
@@ -76,7 +77,7 @@ class Yolo2Segment(Processor):
             if not os.path.exists(model_weights):
                 raise FileNotFoundError(f"Model file not found: {model_weights}")
 
-        self.logger.info("Loading YOLO weights from %s", model_weights)
+        self.logger.info(f"Loading YOLO weights from {model_weights}")
         self.model = YOLO(model_weights)
         self.model.to(device)
 
@@ -148,7 +149,7 @@ class Yolo2Segment(Processor):
             target_size = self.parameter.get('target_size', 1024)
             zoomed = target_size / max(page_image_raw.width, page_image_raw.height)
         else:
-            self.logger.warning("Unknown resize_mode '%s', falling back to 'none'", resize_mode)
+            self.logger.warning(f"Unknown resize_mode {resize_mode}, falling back to 'none'")
             zoomed = 1.0
 
         if level == 'page':
@@ -156,12 +157,12 @@ class Yolo2Segment(Processor):
         elif level == 'table':
             segments = page.get_AllRegions(depth=1, classes=['Table'])
             if not segments:
-                self.logger.warning("No existing TableRegions on page '%s'", page_id)
+                self.logger.warning(f"No existing TableRegions on page {page_id}")
         elif level in ('region', 'text-region'):
             # TextRegions
             segments = page.get_AllRegions(depth=1, classes=['Text'])
             if not segments:
-                self.logger.warning("No existing TextRegions on page '%s'", page_id)
+                self.logger.warning(f"No existing TextRegions on page {page_id}")
         else:
             raise ValueError(f"Unknown level-of-operation / operation_level: {level}")
 
@@ -241,12 +242,9 @@ class Yolo2Segment(Processor):
                 counts = np.sqrt(3 * counts)
                 counts = counts[(5 < counts) & (counts < 100)]
                 scale = int(np.median(counts))
-                self.logger.debug("estimated scale: %d", scale)
+                self.logger.debug(f"estimated scale: {scale}")
 
-        self.logger.info(
-            "Feeding YOLO: array_raw shape=%s, dtype=%s",
-            array_raw.shape, array_raw.dtype
-        )
+        self.logger.info(f"Feeding YOLO: array_raw shape={array_raw.shape}, dtype={array_raw.dtype}")
 
         use_end2end = False
         if hasattr(self.model.model, "end2end"):
@@ -254,6 +252,7 @@ class Yolo2Segment(Processor):
 
         # Run YOLO inference and set end2end to false if using older YOLO models
         pil = Image.fromarray(array_raw)
+
         if use_end2end:
             self.logger.info("Use YOLO end2end")
         else:
@@ -263,10 +262,10 @@ class Yolo2Segment(Processor):
 
         n_boxes = len(results[0].boxes or [])
         n_masks = len(getattr(results[0], 'masks', []) or [])
-        self.logger.info("Wrapper: YOLO returned %d boxes and %d masks", n_boxes, n_masks)
+        self.logger.info(f"Wrapper: YOLO returned {n_boxes} boxes and {n_masks} masks")
 
         if not results or not results[0].boxes:
-            self.logger.warning("Detected no regions on %s '%s'", segtype, segment.id)
+            self.logger.warning(f"Detected no regions on {segtype} {segment.id}")
             return None
         else:
             self.logger.info(f"YOLO inference complete: {results}")
@@ -281,7 +280,6 @@ class Yolo2Segment(Processor):
         # Extract detections from YOLO results
         result = results[0]
         boxes = result.boxes
-        self.logger.info("result.masks.xy length = %d", len(result.masks.xy) if hasattr(result, 'masks') else 0)
 
         # Get the masks or boxes if no mask have been found
         use_boxes_as_masks = self.parameter.get('use_boxes_as_masks', True)
@@ -322,7 +320,7 @@ class Yolo2Segment(Processor):
             keep_indices = [i for i, cls in enumerate(classes)
                             if cls < len(self.categories) and self.categories[cls]]
             if not keep_indices:
-                self.logger.warning("No detections for selected categories on %s '%s'", segtype, segment.id)
+                self.logger.warning(f"No detections for selected categories on {segtype} {segment.id}")
                 return None
             masks = masks[keep_indices]
             scores = scores[keep_indices]
@@ -364,28 +362,21 @@ class Yolo2Segment(Processor):
         region_no = 0
         line_no = 0
 
-        self.logger.info("Starting main loop with %d masks, %d classes, %d scores",
-                         len(masks), len(classes), len(scores))
+        self.logger.info(f"Starting main loop with {len(masks)} masks, {len(classes)} classes, {len(scores)} scores")
 
         for idx, (mask, class_id, score) in enumerate(zip(masks, classes, scores)):
             if class_id >= len(self.categories):
-                self.logger.warning(
-                    "Class id %d out of range for categories (len=%d) on segment %s '%s'",
-                    class_id, len(self.categories), segtype, segment.id
-                )
+                self.logger.warning(f"Class id {class_id} out of range for categories (len={len(self.categories)}) on segment {segtype} {segment.id}")
                 continue
 
             category = self.categories[class_id]
-            self.logger.info(
-                "=== Loop iteration %d/%d: %s (class=%d, score=%.3f) ===",
-                idx + 1, len(masks), category, class_id, score
-            )
+            self.logger.info(f"=== Loop iteration {idx + 1}/{len(masks)}: {category} (class={class_id}, score={score}) ===")
 
             if not category:
-                self.logger.warning("Category is empty/None for class %d", class_id)
+                self.logger.warning(f"Category is empty/None for class {class_id}")
                 continue
 
-            self.logger.info("Processing non-border region: %s", category)
+            self.logger.info(f"Processing non-border region: {category}")
 
             self.logger.info(f"YOLO orig_shape: {result.orig_shape}, mask xy shape: {result.masks.xy[idx].shape}")
             self.logger.info(f"Image shape after resize: {array_raw.shape[:2]}")
@@ -397,9 +388,9 @@ class Yolo2Segment(Processor):
                     continue
                 # Check if Border already exists
                 if segment.get_Border() is not None:
-                    self.logger.warning("Page already has a Border, skipping new border with score %.3f", score)
+                    self.logger.warning(f"Page already has a Border, skipping new border with score {score}")
                     continue
-                self.logger.info("Processing page boundary (score=%.3f)", score)
+                self.logger.info(f"Processing page boundary with score {score}")
 
                 # Newer YOLO models should already return closed contours
                 if idx < len(result.masks.xy) and not use_boxes_as_masks:
@@ -431,7 +422,7 @@ class Yolo2Segment(Processor):
                 border_coords = CoordsType(points_from_polygon(page_polygon), conf=score)
                 border = BorderType(Coords=border_coords)
                 segment.set_Border(border)
-                self.logger.info("Set page Border from 'page' detection (conf=%.3f)", score)
+                self.logger.info(f"Set page Border from 'page' detection with conf {score}")
 
                 # Skip creating a region for this
                 continue
@@ -461,15 +452,10 @@ class Yolo2Segment(Processor):
                     mask = cv2.dilate(mask.astype(np.uint8), np.ones((scale, scale), np.uint8)) > 0
 
                 if invalid:
-                    self.logger.warning("Ignoring non-contiguous (%d) region for %s", len(contours), category)
+                    self.logger.warning(f"Ignoring non-contiguous {len(contours)} region for {category}")
                     continue
                 raw_contour = contours[0][:, 0, :].astype(np.float32)
                 source = "fallback contour"
-
-            self.logger.info(f"Detection {idx} based on {source}: raw polygon ({len(raw_contour)} points, first 10): {raw_contour[:10].tolist()}")
-            self.logger.info(f"raw_contour bounds: x=[{raw_contour[:,0].min():.1f}, {raw_contour[:,0].max():.1f}], " f"y=[{raw_contour[:,1].min():.1f}, {raw_contour[:,1].max():.1f}]")
-            self.logger.info(f"Image dimensions: {width}x{height}, zoomed: {zoomed}")
-            self.logger.info(f"coords transform: {coords['transform']}")
 
             if self.parameter.get('debug_img') != 'none':
                 vis_img = array_raw.copy()
@@ -486,7 +472,7 @@ class Yolo2Segment(Processor):
             if level != 'page':
                 page_poly = polygon_for_parent(page_poly, segment)
                 if page_poly is None:
-                    self.logger.warning("Ignoring clipped-away region for %s", category)
+                    self.logger.warning(f"Ignoring clipped-away region for {category}")
                     continue
                 self.logger.info(f"After polygon_for_parent: {len(page_poly)} points")
             else:
@@ -498,7 +484,7 @@ class Yolo2Segment(Processor):
             if not poly.is_valid:
                 poly = poly.convex_hull
 
-            # Add buffer and simplify
+            # Add buffer and simplify only when using boxes as masks
             if use_boxes_as_masks:
                 poly = poly.buffer(1.0)
                 poly = poly.simplify(tolerance=1.0, preserve_topology=True)
@@ -507,9 +493,6 @@ class Yolo2Segment(Processor):
             smoothed_coords = list(poly.exterior.coords)[:-1]
             self.logger.info(f"Final polygon: {len(smoothed_coords)} points")
 
-            self.logger.info(f"Points being written to PageXML: {len(smoothed_coords)}")
-            self.logger.info(f"First 5 points: {smoothed_coords[:5]}")
-            self.logger.info(f"Last 5 points: {smoothed_coords[-5:]}")
             # Create CoordsType from the smoothed polygon
             region_coords = CoordsType(
                 points_from_polygon(smoothed_coords),
@@ -517,17 +500,14 @@ class Yolo2Segment(Processor):
             )
 
             cat = category.split(':')
-            self.logger.info("Category split: %s -> %s", category, cat)
+            self.logger.info(f"Category split: {category} to {cat}")
 
             # TextLine case
             if cat[0] == 'TextLine':
                 # Lines must live inside TextRegions (or TextRegions inside tables),
                 # not directly on the page or table.
                 if level == 'page':
-                    self.logger.warning(
-                        "Got TextLine category '%s' on page level – lines must be created inside regions. Skipping.",
-                        category
-                    )
+                    self.logger.warning(f"Got TextLine category {category} on page level: lines must be created inside regions. Skipping.")
                     continue
 
                 # Decide where to attach the line
@@ -550,20 +530,13 @@ class Yolo2Segment(Processor):
                         tr_coords = segment.get_Coords() or region_coords
                         parent_region = TextRegionType(id=tr_id, Coords=tr_coords)
                         segment.add_TextRegion(parent_region)
-                        self.logger.info("Created TextRegion %s inside TableRegion %s to hold TextLines",
-                                         tr_id, segment.id)
+                        self.logger.info(f"Created TextRegion {tr_id} inside TableRegion {segment.id} to hold TextLines")
                 else:
-                    self.logger.warning(
-                        "Skipping TextLine detection on unsupported segment type %s (%s)",
-                        segment.id, segment.__class__.__name__
-                    )
+                    self.logger.warning(f"Skipping TextLine detection on unsupported segment type {segment.id} ({segment.__class__.__name__})")
                     continue
 
                 if parent_region is None:
-                    self.logger.warning(
-                        "Could not determine parent TextRegion for TextLine in segment %s (%s) – skipping",
-                        segment.id, segment.__class__.__name__
-                    )
+                    self.logger.warning(f"Could not determine parent TextRegion for TextLine in segment {segment.id} ({segment.__class__.__name__}): skipping")
                     continue
 
                 line_no += 1
@@ -574,7 +547,7 @@ class Yolo2Segment(Processor):
                     line.set_custom(cat[1])
 
                 parent_region.add_TextLine(line)
-                self.logger.info("Added TextLine %s to %s", line_id, parent_region.id)
+                self.logger.info(f"Added TextLine {line_id} to {parent_region.id}")
                 continue
 
             cat2class = {
@@ -620,20 +593,18 @@ class Yolo2Segment(Processor):
                 except (KeyError, ValueError):
                     region.set_custom(cat[1])
 
-            self.logger.info("About to add %s to %s", cat[0], segment.__class__.__name__)
+            self.logger.info(f"About to add {cat[0]} to {segment.__class__.__name__}")
 
             # Check if the segment has the required add method
             add_method = f'add_{cat[0]}'
             if not hasattr(segment, add_method):
-                self.logger.error("Segment %s does not have method %s!",
-                                  segment.__class__.__name__, add_method)
+                self.logger.error(f"Segment {segment.__class__.__name__} does not have method {add_method}!")
                 continue
 
             getattr(segment, add_method)(region)
 
-            self.logger.info("=== Completed iteration %d/%d ===", idx + 1, len(masks))
-            self.logger.info("Detected %s region%04d (p=%.2f) on %s '%s'",
-                             category, region_no, score, segtype, segment.id)
+            self.logger.info(f"=== Completed iteration {idx + 1}/{len(masks)} ===")
+            self.logger.info(f"Detected {category} {region_no} ({score}) on {segtype} {segment.id}")
 
         # Debug visualization if requested
         if self.parameter.get('debug_img') != 'none':
