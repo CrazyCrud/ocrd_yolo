@@ -287,7 +287,7 @@ class Yolo2Segment(Processor):
         boxes = result.boxes
 
         # Try to get masks, but prepare box fallback
-        use_boxes_as_masks = True  # self.parameter.get('use_boxes_as_masks', False)
+        use_boxes_as_masks = self.parameter.get('use_boxes_as_masks')
         masks = None
 
         if hasattr(result, 'masks') and result.masks is not None and not use_boxes_as_masks:

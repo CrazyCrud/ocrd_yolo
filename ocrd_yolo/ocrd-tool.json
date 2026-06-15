@@ -51,6 +51,11 @@
                     "type": "string",
                     "default": "cuda",
                     "description": "select computing device for PyTorch (e.g. cpu or cuda:0); will fall back to CPU if no GPU is available"
+                },
+                "use_boxes_as_masks": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "use boxes instead of masks"
                 }
             },
             "resources": [

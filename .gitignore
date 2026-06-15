@@ -64,3 +64,6 @@ tests/example.json
 
 # Project-specific
 .history
+
+# Project specific
+runs/
