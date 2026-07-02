@@ -90,6 +90,9 @@ class Yolo2Segment(Processor):
         model_classes = self.model.model.names if hasattr(self.model.model, 'names') else {}
         self.logger.info(f"Model has {len(model_classes)} classes")
 
+        # Get debug bool
+        self.debug_img = self.parameter.get('debug_img', False)
+
     def process_page_pcgts(self, *input_pcgts: Optional[OcrdPage], page_id: Optional[str] = None) -> OcrdPageResult:
         """
         Use YOLO to segment each page.
@@ -229,6 +232,8 @@ class Yolo2Segment(Processor):
 
     def _process_segment(self, segment, ignore, coords, array_raw, array_bin, zoomed, page_id, level) -> Optional[
         OcrdPageResultImage]:
+        model_type = self.parameter.get('level-of-operation')
+
         segtype = segment.__class__.__name__[:-4]
         segment.set_custom('coords=%s' % coords['transform'])
         height, width = array_raw.shape[:2]
@@ -262,10 +267,10 @@ class Yolo2Segment(Processor):
 
         n_boxes = len(results[0].boxes or [])
         n_masks = len(getattr(results[0], 'masks', []) or [])
-        self.logger.info(f"Wrapper: YOLO returned {n_boxes} boxes and {n_masks} masks")
+        self.logger.info(f"YOLO returned {n_boxes} boxes and {n_masks} masks")
 
-        if not results or not results[0].boxes:
-            self.logger.warning(f"Detected no regions on {segtype} {segment.id}")
+        if not results:
+            self.logger.warning(f"Detected nothing on {segtype} {segment.id}")
             return None
         else:
             self.logger.info(f"YOLO inference complete: {results}")
@@ -279,23 +284,48 @@ class Yolo2Segment(Processor):
 
         # Extract detections from YOLO results
         result = results[0]
-        boxes = result.boxes
 
-        # Get the masks or boxes if no mask have been found
-        use_boxes_as_masks = self.parameter.get('use_boxes_as_masks', True)
-        masks = None
-        # Get masks if boxes shouldn't be used
-        if hasattr(result, 'masks') and result.masks is not None and not use_boxes_as_masks:
-            masks = result.masks.data.cpu().numpy()
-            
-        if use_boxes_as_masks or masks is None:
+        # Get the masks, boxes or obb results
+        masks = []
+        boxes = None
+        obbs = None
+        scores = None
+        classes = None
+
+        # Get scores and class names based on model type
+        if model_type == "segmentation" or model_type == "box":
+            boxes = result.boxes
+            scores = boxes.conf.cpu().numpy()
+            classes = boxes.cls.cpu().numpy().astype(int)
+        else:
+            # An OBB object containing oriented bounding boxes.
+            obbs = result.obb
+            # classes = [result.names[cls.item()] for cls in result.obb.cls.int()]  # class name of each box
+            classes = obbs.cls.cpu().numpy().astype(int)
+            scores = obbs.conf.cpu().numpy()
+
+        if model_type == "segmentation":
+            if hasattr(result, 'masks') and result.masks is not None:
+                masks = result.masks.data.cpu().numpy()
+                # Take masks and resize them based on image width and height, but only when the zoom is not euqal to 1
+                if masks.shape[1:] != (height, width):
+                    masks_resized = []
+                    for mask in masks:
+                        mask_resized = cv2.resize(mask.astype(np.uint8), (width, height),
+                                                    interpolation=cv2.INTER_NEAREST)
+                        masks_resized.append(mask_resized > 0.5)
+                    masks = np.array(masks_resized)
+            else:
+                self.logger.warning("No masks detected...")
+        elif model_type == "box":
             self.logger.info("Using bounding boxes to create masks")
-            masks = []
             for box in boxes:
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                 mask = np.zeros((height, width), dtype=np.uint8)
-                x1, x2 = int(x1 * width / result.orig_shape[1]), int(x2 * width / result.orig_shape[1])
-                y1, y2 = int(y1 * height / result.orig_shape[0]), int(y2 * height / result.orig_shape[0])
+                scale_x = width / result.orig_shape[1]
+                scale_y = height / result.orig_shape[0]
+                x1, x2 = int(x1 * scale_x), int(x2 * scale_x)
+                y1, y2 = int(y1 * scale_y), int(y2 * scale_y)
                 # Add static margin to the boxes
                 margin = 3
                 x1, y1, x2, y2 = max(0, x1 - margin), max(0, y1 - margin), min(width, x2 + margin), min(height, y2 + margin)
@@ -303,18 +333,29 @@ class Yolo2Segment(Processor):
                 masks.append(mask > 0)
             masks = np.array(masks)
         else:
-            # Take masks and resize them based on image width and height, but only when the zoom is not euqal to 1
-            if masks.shape[1:] != (height, width):
-                masks_resized = []
-                for mask in masks:
-                    mask_resized = cv2.resize(mask.astype(np.uint8), (width, height),
-                                                interpolation=cv2.INTER_NEAREST)
-                    masks_resized.append(mask_resized > 0.5)
-                masks = np.array(masks_resized)
+            # https://stackoverflow.com/questions/79371585/use-yolo-obb-coordinates-to-crop-rotated-objects-in-opencv
+            self.logger.info("Using obbs to create masks")
+            if hasattr(result, 'obb') and result.obb is not None:
+                for obb in obbs:
+                    points = obb.xyxyxyxy[0].cpu().numpy()  # polygon format with 4-points
+                    scale_x = width / result.orig_shape[1]
+                    scale_y = height / result.orig_shape[0]
 
-        scores = boxes.conf.cpu().numpy()
-        classes = boxes.cls.cpu().numpy().astype(int)
+                    points[:, 0] *= scale_x
+                    points[:, 1] *= scale_y
+                    points = points.astype(np.int32)
 
+                    mask = np.zeros((height, width), dtype=np.uint8)
+                    cv2.fillPoly(mask, [points.reshape((-1, 1, 2))], 1)
+
+                    # https://stackoverflow.com/questions/60490882/cut-mask-out-of-image-with-certain-pixel-margin-numpy-opencv
+                    margin = 3
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (margin, margin))
+                    mask = cv2.dilate(mask, kernel, iterations=3)
+                masks = np.array(masks)
+            else:
+                self.logger.warning("No obbs detected...")
+            
         # Filter by categories if specified
         if not all(self.categories):
             keep_indices = [i for i, cls in enumerate(classes)
@@ -376,9 +417,7 @@ class Yolo2Segment(Processor):
                 self.logger.warning(f"Category is empty/None for class {class_id}")
                 continue
 
-            self.logger.info(f"Processing non-border region: {category}")
-
-            self.logger.info(f"YOLO orig_shape: {result.orig_shape}, mask xy shape: {result.masks.xy[idx].shape}")
+            self.logger.info(f"Processing region: {category}")
             self.logger.info(f"Image shape after resize: {array_raw.shape[:2]}")
 
             # Special handling for page class
@@ -392,31 +431,28 @@ class Yolo2Segment(Processor):
                     continue
                 self.logger.info(f"Processing page boundary with score {score}")
 
-                # Newer YOLO models should already return closed contours
-                if idx < len(result.masks.xy) and not use_boxes_as_masks:
-                    border_contour_xy = result.masks.xy[idx]
-                    page_polygon = border_contour_xy.astype(np.float32)
-                else:
-                    mask_uint8 = mask.astype(np.uint8)
-                    border_kernel_size = max(10, scale // 2)
-                    kernel = np.ones((border_kernel_size, border_kernel_size), np.uint8)
-                    mask_closed = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
+                # Every detection is a mask
+                mask_uint8 = mask.astype(np.uint8)
+                border_kernel_size = max(10, scale // 2)
+                kernel = np.ones((border_kernel_size, border_kernel_size), np.uint8)
+                mask_closed = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
+                
+                contours, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if not contours:
+                    self.logger.warning("Could not extract page boundary contour")
+                    continue
                     
-                    contours, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if not contours:
-                        self.logger.warning("Could not extract page boundary contour")
-                        continue
-
-                    all_points = np.concatenate(contours)
-                    page_polygon = cv2.convexHull(all_points)[:, 0, :]
+                all_points = np.concatenate(contours)
+                page_polygon = cv2.convexHull(all_points)[:, 0, :]
+                
+                # Set zoom also for page border element
+                if zoomed != 1.0:
+                    page_polygon = page_polygon / zoomed
 
                 page_polygon = coordinates_for_segment(page_polygon, None, coords)
                 if page_polygon.shape[0] < 3:
                     self.logger.warning("Border polygon has <3 points")
                     continue
-
-                if zoomed != 1.0:
-                    page_polygon = page_polygon / zoomed
 
                 # Create Border element
                 border_coords = CoordsType(points_from_polygon(page_polygon), conf=score)
@@ -428,44 +464,37 @@ class Yolo2Segment(Processor):
                 continue
             
             # Create contours
-            # Newer YOLO models should already return closed contours
-            if idx < len(result.masks.xy) and not use_boxes_as_masks:
-                raw_contour = result.masks.xy[idx].astype(np.float32)   # (P, 2)
-                source = "model polygon"
-            else:
-                # fallback – old contour extraction (kept only for legacy models)
-                mask_uint8 = mask.astype(np.uint8)
-                kernel_size = max(3, min(scale // 5, 15))
-                if kernel_size % 2 == 0:
-                    kernel_size += 1
-                kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                mask_closed = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
-                mask = mask_closed > 0
+            mask_uint8 = mask.astype(np.uint8)
+            kernel_size = max(3, min(scale // 5, 15))
+            if kernel_size % 2 == 0:
+                kernel_size += 1
+            kernel = np.ones((kernel_size, kernel_size), np.uint8)
+            mask_closed = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
+            mask = mask_closed > 0
 
-                invalid = True
-                contours = []
-                for _ in range(10):
-                    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if len(contours) == 1 and len(contours[0]) > 3:
-                        invalid = False
-                        break
-                    mask = cv2.dilate(mask.astype(np.uint8), np.ones((scale, scale), np.uint8)) > 0
+            invalid = True
+            contours = []
+            for _ in range(10):
+                contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if len(contours) == 1 and len(contours[0]) > 3:
+                    invalid = False
+                    break
+                mask = cv2.dilate(mask.astype(np.uint8), np.ones((scale, scale), np.uint8)) > 0
 
-                if invalid:
-                    self.logger.warning(f"Ignoring non-contiguous {len(contours)} region for {category}")
-                    continue
-                raw_contour = contours[0][:, 0, :].astype(np.float32)
-                source = "fallback contour"
+            if invalid:
+                self.logger.warning(f"Ignoring non-contiguous {len(contours)} region for {category}")
+                continue
+            raw_contour = contours[0][:, 0, :].astype(np.float32)
 
-            if self.parameter.get('debug_img') != 'none':
+            if self.debug_img == True:
                 vis_img = array_raw.copy()
                 pts = raw_contour.astype(np.int32)
                 cv2.polylines(vis_img, [pts], isClosed=True, color=(0,255,0), thickness=2)
                 cv2.imwrite(f"/tmp/debug_polygon_{segment.id}_{idx}.png", vis_img)
-
+            
+            # See https://github.com/bertsky/ocrd_detectron2/blob/master/ocrd_detectron2/segment.py#L429C13-L430C57
             if zoomed != 1.0:
                 raw_contour = raw_contour / zoomed
-
             # Map into page coords
             # Using Qwen 3.5 397B A17B, it was discovered that polygon_for_parent removes too many points from the polygons.
             page_poly = coordinates_for_segment(raw_contour, None, coords)
@@ -485,7 +514,7 @@ class Yolo2Segment(Processor):
                 poly = poly.convex_hull
 
             # Add buffer and simplify only when using boxes as masks
-            if use_boxes_as_masks:
+            if model_type == "box":
                 poly = poly.buffer(1.0)
                 poly = poly.simplify(tolerance=1.0, preserve_topology=True)
 
@@ -607,7 +636,7 @@ class Yolo2Segment(Processor):
             self.logger.info(f"Detected {category} {region_no} ({score}) on {segtype} {segment.id}")
 
         # Debug visualization if requested
-        if self.parameter.get('debug_img') != 'none':
+        if self.debug_img == True:
             vis_img = array_raw.copy()
             for mask, class_id in zip(masks, classes):
                 color = np.random.randint(0, 255, 3).tolist()

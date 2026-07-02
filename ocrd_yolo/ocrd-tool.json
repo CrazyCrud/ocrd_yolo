@@ -42,20 +42,20 @@
                     "description": "which postprocessing steps to enable: by default, applies a custom non-maximum suppression (to avoid overlaps) and morphological operations (using connected component analysis on the binarized input image to shrink or expand regions)"
                 },
                 "debug_img": {
-                    "type": "string",
-                    "enum": ["none", "visualize"],
-                    "default": "none",
-                    "description": "paint an AlternativeImage which blends the input image and all detected regions"
+                    "type": "boolean",
+                    "default": false,
+                    "description": "paint debug images that blend the input image and all detected regions"
                 },
                 "device": {
                     "type": "string",
                     "default": "cuda",
                     "description": "select computing device for PyTorch (e.g. cpu or cuda:0); will fall back to CPU if no GPU is available"
                 },
-                "use_boxes_as_masks": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "use boxes instead of masks"
+                "model_type": {
+                    "type": "string",
+                    "enum": ["box", "segmentation", "obb"],
+                    "default": "box",
+                    "description": "use box, segmentation or obb results"
                 }
             },
             "resources": [
