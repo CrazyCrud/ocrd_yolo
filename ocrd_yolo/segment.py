@@ -232,7 +232,7 @@ class Yolo2Segment(Processor):
 
     def _process_segment(self, segment, ignore, coords, array_raw, array_bin, zoomed, page_id, level) -> Optional[
         OcrdPageResultImage]:
-        model_type = self.parameter.get('level-of-operation')
+        model_type = self.parameter.get('model_type')
 
         segtype = segment.__class__.__name__[:-4]
         segment.set_custom('coords=%s' % coords['transform'])
@@ -293,6 +293,8 @@ class Yolo2Segment(Processor):
         obbs = None
         scores = None
         classes = None
+
+        self.logger.info(f"Model type: {model_type}")
 
         # Get scores and class names based on model type
         if model_type == "segmentation" or model_type == "box":
