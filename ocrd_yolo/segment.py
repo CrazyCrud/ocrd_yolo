@@ -267,20 +267,22 @@ class Yolo2Segment(Processor):
 
         n_boxes = len(results[0].boxes or [])
         n_masks = len(getattr(results[0], 'masks', []) or [])
-        self.logger.info(f"YOLO returned {n_boxes} boxes and {n_masks} masks")
+        n_obbs = len(getattr(results[0], 'obb', []) or [])
+        self.logger.info(f"YOLO returned {n_boxes} boxes, {n_masks} masks and {n_obbs} obbs")
 
         if not results:
             self.logger.warning(f"Detected nothing on {segtype} {segment.id}")
             return None
         else:
             self.logger.info(f"YOLO inference complete: {results}")
-            self.logger.info(f"Raw detections: {len(results[0].boxes)}")
+            """
             for i, box in enumerate(results[0].boxes):
                 cls = int(box.cls)
                 conf = float(box.conf)
                 self.logger.info(
                     f" Detection {i}: class={cls} ({self.categories[cls] if cls < len(self.categories) else 'unknown'}), conf={conf:.3f}"
                 )
+            """
 
         # Extract detections from YOLO results
         result = results[0]
@@ -338,6 +340,7 @@ class Yolo2Segment(Processor):
             if hasattr(result, 'obb') and result.obb is not None:
                 for obb in obbs:
                     points = obb.xyxyxyxy[0].cpu().numpy()  # polygon format with 4-points
+                    self.logger.info(f"OBB points: {points}")
                     scale_x = width / result.orig_shape[1]
                     scale_y = height / result.orig_shape[0]
 
@@ -352,6 +355,8 @@ class Yolo2Segment(Processor):
                     margin = 3
                     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (margin, margin))
                     mask = cv2.dilate(mask, kernel, iterations=3)
+
+                    masks.append(mask > 0)
                 masks = np.array(masks)
             else:
                 self.logger.warning("No obbs detected...")
@@ -380,6 +385,9 @@ class Yolo2Segment(Processor):
                 cv2.fillPoly(mask0, pts=[polygon], color=(255,))
             if np.count_nonzero(mask0):
                 masks[0] = mask0 > 0
+
+        if len(masks) < 1:
+            return None
 
         # Apply post-processing on the mask detection
         if self.postprocessing in ['full', 'only-nms']:
