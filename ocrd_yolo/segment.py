@@ -267,14 +267,11 @@ class Yolo2Segment(Processor):
         results = self.model(pil, conf=self.min_confidence, verbose=False, end2end=use_end2end)
         """
 
+        """
         Image.fromarray(array_raw).save(
             f"/tmp/input_{segment.id}.png"
         )
-
-        self.logger.info(
-            "mean RGB = %s",
-            np.mean(array_raw.reshape(-1, 3), axis=0)
-        )
+        """
 
         results = self.model(pil, conf=self.min_confidence, iou=0.7, verbose=False)
 
