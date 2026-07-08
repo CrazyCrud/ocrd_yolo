@@ -258,12 +258,25 @@ class Yolo2Segment(Processor):
         # Run YOLO inference and set end2end to false if using older YOLO models
         pil = Image.fromarray(array_raw)
 
+        """
         if use_end2end:
             self.logger.info("Use YOLO end2end")
         else:
             self.logger.info("Use YOLO without end2end (old behaviour)")
         
         results = self.model(pil, conf=self.min_confidence, verbose=False, end2end=use_end2end)
+        """
+
+        Image.fromarray(array_raw).save(
+            f"/tmp/input_{segment.id}.png"
+        )
+
+        self.logger.info(
+            "mean RGB = %s",
+            np.mean(array_raw.reshape(-1, 3), axis=0)
+        )
+
+        results = self.model(pil, conf=self.min_confidence, iou=0.7, verbose=False)
 
         n_boxes = len(results[0].boxes or [])
         n_masks = len(getattr(results[0], 'masks', []) or [])
@@ -331,7 +344,7 @@ class Yolo2Segment(Processor):
                 x1, x2 = int(x1 * scale_x), int(x2 * scale_x)
                 y1, y2 = int(y1 * scale_y), int(y2 * scale_y)
                 # Add static margin to the boxes
-                margin = 3
+                margin = 5
                 x1, y1, x2, y2 = max(0, x1 - margin), max(0, y1 - margin), min(width, x2 + margin), min(height, y2 + margin)
                 mask[y1:y2, x1:x2] = 1
                 masks.append(mask > 0)
@@ -354,7 +367,7 @@ class Yolo2Segment(Processor):
                     cv2.fillPoly(mask, [points.reshape((-1, 1, 2))], 1)
 
                     # https://stackoverflow.com/questions/60490882/cut-mask-out-of-image-with-certain-pixel-margin-numpy-opencv
-                    margin = 3
+                    margin = 5
                     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (margin, margin))
                     mask = cv2.dilate(mask, kernel, iterations=3)
 
@@ -495,12 +508,6 @@ class Yolo2Segment(Processor):
                 self.logger.warning(f"Ignoring non-contiguous {len(contours)} region for {category}")
                 continue
             raw_contour = contours[0][:, 0, :].astype(np.float32)
-
-            if self.debug_img == True:
-                vis_img = array_raw.copy()
-                pts = raw_contour.astype(np.int32)
-                cv2.polylines(vis_img, [pts], isClosed=True, color=(0,255,0), thickness=2)
-                cv2.imwrite(f"/tmp/debug_polygon_{segment.id}_{idx}.png", vis_img)
             
             # See https://github.com/bertsky/ocrd_detectron2/blob/master/ocrd_detectron2/segment.py#L429C13-L430C57
             if zoomed != 1.0:
@@ -523,14 +530,23 @@ class Yolo2Segment(Processor):
             if not poly.is_valid:
                 poly = poly.convex_hull
 
-            # Add buffer and simplify only when using boxes as masks
-            if model_type == "box":
-                poly = poly.buffer(1.0)
-                poly = poly.simplify(tolerance=1.0, preserve_topology=True)
+            # Old behaviour
+            poly = poly.buffer(5.0)
+            poly = poly.simplify(tolerance=10.0, preserve_topology=True)
 
             # Extract the exterior coords (drop the closing point)
             smoothed_coords = list(poly.exterior.coords)[:-1]
-            self.logger.info(f"Final polygon: {len(smoothed_coords)} points")
+            self.logger.info(
+                "raw_contour=%d -> final_polygon=%d",
+                len(raw_contour),
+                len(smoothed_coords)
+            )
+
+            if self.debug_img == True:
+                vis_img = array_raw.copy()
+                final_pts = np.array(smoothed_coords, dtype=np.int32)
+                cv2.polylines(vis_img, [final_pts], isClosed=True, color=(0,255,0), thickness=2)
+                cv2.imwrite(f"/tmp/debug_polygon_{segment.id}_{idx}.png", vis_img)
 
             # Create CoordsType from the smoothed polygon
             region_coords = CoordsType(
