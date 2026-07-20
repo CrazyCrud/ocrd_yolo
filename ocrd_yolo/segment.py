@@ -155,6 +155,9 @@ class Yolo2Segment(Processor):
             self.logger.warning(f"Unknown resize_mode {resize_mode}, falling back to 'none'")
             zoomed = 1.0
 
+        # TODO: Just for testing
+        zoomed = 1.0
+
         if level == 'page':
             segments = [page]
         elif level == 'table':
@@ -251,29 +254,22 @@ class Yolo2Segment(Processor):
 
         self.logger.info(f"Feeding YOLO: array_raw shape={array_raw.shape}, dtype={array_raw.dtype}")
 
-        use_end2end = False
-        if hasattr(self.model.model, "end2end"):
-            use_end2end = bool(self.model.model.end2end)
+        # Force uint8, just to be shure
+        if array_raw.dtype != np.uint8:
+            if array_raw.max() <= 1.0:
+                array_raw = (array_raw * 255).astype(np.uint8)
+            else:
+                array_raw = array_raw.astype(np.uint8)
 
-        # Run YOLO inference and set end2end to false if using older YOLO models
-        pil = Image.fromarray(array_raw)
+        array_raw_bgr = cv2.cvtColor(array_raw, cv2.COLOR_RGB2BGR)
 
-        """
-        if use_end2end:
-            self.logger.info("Use YOLO end2end")
-        else:
-            self.logger.info("Use YOLO without end2end (old behaviour)")
+        # Save the BGR image for debugging to verify it matches the standalone input
+        # cv2.imwrite(f"/tmp/input_{segment.id}_bgr.png", array_raw_bgr)
+
+        imgsz = self.parameter.get('imgsz', 1280) 
         
-        results = self.model(pil, conf=self.min_confidence, verbose=False, end2end=use_end2end)
-        """
-
-        """
-        Image.fromarray(array_raw).save(
-            f"/tmp/input_{segment.id}.png"
-        )
-        """
-
-        results = self.model(pil, conf=self.min_confidence, iou=0.7, verbose=False)
+        # PDo the prediction
+        results = self.model(array_raw_bgr, conf=self.min_confidence, iou=0.7, imgsz=imgsz, end2end=False, verbose=False)
 
         n_boxes = len(results[0].boxes or [])
         n_masks = len(getattr(results[0], 'masks', []) or [])
@@ -285,17 +281,17 @@ class Yolo2Segment(Processor):
             return None
         else:
             self.logger.info(f"YOLO inference complete: {results}")
-            """
-            for i, box in enumerate(results[0].boxes):
-                cls = int(box.cls)
-                conf = float(box.conf)
-                self.logger.info(
-                    f" Detection {i}: class={cls} ({self.categories[cls] if cls < len(self.categories) else 'unknown'}), conf={conf:.3f}"
-                )
-            """
 
         # Extract detections from YOLO results
         result = results[0]
+        if result.obb is not None:
+            self.logger.info(f"Raw OBB count: {len(result.obb.cls)}")
+            for i, (cls, conf) in enumerate(zip(result.obb.cls, result.obb.conf)):
+                self.logger.info(f"  OBB {i}: class={int(cls)} (={self.model.names[int(cls)]}), conf={float(conf):.4f}")
+        else:
+            self.logger.warning("No OBB detections at all!")
+
+        orig_h, orig_w = result.orig_shape
 
         # Get the masks, boxes or obb results
         masks = []
@@ -314,7 +310,6 @@ class Yolo2Segment(Processor):
         else:
             # An OBB object containing oriented bounding boxes.
             obbs = result.obb
-            # classes = [result.names[cls.item()] for cls in result.obb.cls.int()]  # class name of each box
             classes = obbs.cls.cpu().numpy().astype(int)
             scores = obbs.conf.cpu().numpy()
 
@@ -350,14 +345,20 @@ class Yolo2Segment(Processor):
             # https://stackoverflow.com/questions/79371585/use-yolo-obb-coordinates-to-crop-rotated-objects-in-opencv
             self.logger.info("Using obbs to create masks")
             if hasattr(result, 'obb') and result.obb is not None:
+                self.logger.info(
+                    "OBB class tensor shape: %s",
+                    obbs.cls.shape if obbs is not None else None
+                )
+
+                self.logger.info(
+                    "OBB confidence tensor shape: %s",
+                    obbs.conf.shape if obbs is not None else None
+                )
                 for obb in obbs:
                     points = obb.xyxyxyxy[0].cpu().numpy()  # polygon format with 4-points
                     self.logger.info(f"OBB points: {points}")
-                    scale_x = width / result.orig_shape[1]
-                    scale_y = height / result.orig_shape[0]
-
-                    points[:, 0] *= scale_x
-                    points[:, 1] *= scale_y
+                    points[:, 0] = points[:, 0] * (width / orig_w)
+                    points[:, 1] = points[:, 1] * (height / orig_h)
                     points = points.astype(np.int32)
 
                     mask = np.zeros((height, width), dtype=np.uint8)
@@ -400,6 +401,8 @@ class Yolo2Segment(Processor):
 
         if len(masks) < 1:
             return None
+        
+        self.logger.info(f"Before NMS: {len(masks)} masks, scores={scores}")
 
         # Apply post-processing on the mask detection
         if self.postprocessing in ['full', 'only-nms']:
@@ -411,6 +414,8 @@ class Yolo2Segment(Processor):
             _, components = cv2.connectedComponents(array_bin.astype(np.uint8))
             scores, classes, masks = postprocess_morph(
                 scores, classes, masks, components, nproc=8, logger=self.logger)
+
+        self.logger.info(f"After NMS: {len(masks)} masks, scores={scores}")
 
         # Remove placeholder for existing regions due to NMS step above
         if len(ignore):
@@ -566,7 +571,7 @@ class Yolo2Segment(Processor):
                 parent_region = None
 
                 if isinstance(segment, TextRegionType):
-                    # Normal case running on a TextRegion
+                    # Normal case: running on a TextRegion
                     parent_region = segment
 
                 elif isinstance(segment, TableRegionType):
@@ -657,20 +662,24 @@ class Yolo2Segment(Processor):
 
             self.logger.info(f"=== Completed iteration {idx + 1}/{len(masks)} ===")
             self.logger.info(f"Detected {category} {region_no} ({score}) on {segtype} {segment.id}")
-
-        # Debug visualization if requested
+        
+        # Debug visualization if requested. Don't add as alternative image to the OCR-D workspace ...
         if self.debug_img == True:
+            COLORS = {
+                0: (0, 255, 0),
+                1: (255, 0, 0),
+                2: (0, 0, 255), 
+                3: (255, 255, 0),
+            }
+
             vis_img = array_raw.copy()
             for mask, class_id in zip(masks, classes):
-                color = np.random.randint(0, 255, 3).tolist()
+                color = COLORS.get(class_id, (255,255,255))
                 mask_indices = mask.astype(np.uint8)
                 vis_img[mask_indices > 0] = vis_img[mask_indices > 0] * 0.5 + np.array(color) * 0.5
 
-            altimg = AlternativeImageType(comments='debug')
-            segment.add_AlternativeImage(altimg)
-            return OcrdPageResultImage(
-                Image.fromarray(vis_img.astype(np.uint8)),
-                ('' if isinstance(segment, PageType) else '_' + segment.id) + '.IMG-DEBUG',
-                altimg)
+            debug_path = f"/tmp/debug_{segment.id}_{page_id}.png"
+            cv2.imwrite(debug_path, cv2.cvtColor(vis_img, cv2.COLOR_RGB2BGR))
+            self.logger.info(f"Debug image saved to {debug_path}")
 
         return None
