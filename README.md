@@ -56,7 +56,7 @@ ocrd-yolo-segment \
 
 ## Available Models
 
-- TODO
+- Models trained on historical, handwritten data can be for example downloaded here: [https://huggingface.co/collections/Riksarkivet/htrflow-v012-models](https://huggingface.co/collections/Riksarkivet/htrflow-v012-models) 
 
 ## Parameters
 
@@ -72,24 +72,6 @@ ocrd-yolo-segment \
 - `debug_img` (boolean, default: false): Debug visualization
 - `model_type` (string, default: "box"): Could be "box", "segmentation", and "obb"
 - `device` (string, default: "cuda"): Computing device
-
-## Training Custom Models
-
-### Prepare Dataset
-
-Convert your annotations to YOLO format with this structure:
-
-```
-dataset/
-├── images/
-│   ├── train/
-│   ├── val/
-│   └── test/
-└── labels/
-    ├── train/
-    ├── val/
-    └── test/
-```
 
 ## Category Mapping
 
@@ -147,30 +129,11 @@ ocrd-yolo-segment -I OCR-D-SEG-REGION-1 -O OCR-D-SEG-REGION-2 \
     -p '{"model_weights": "model2.pt", ...}'
 ```
 
-## Performance Tips
-
-1. **Model Selection**:
-   - Use `yolo11n` for speed (real-time processing)
-   - Use `yolo11s` for balanced performance
-   - Use `yolo11m` or larger for maximum accuracy
-
-2. **Batch Processing**:
-   - Process multiple pages together for better GPU utilization
-   - Adjust batch size based on GPU memory
-
-3. **Resolution**:
-   - Image resolution is retained as it increases YOLO's performance 
-   - Will be adaptable in the future
-
-4. **Post-processing**:
-   - Use "only-nms" for cleaner text documents
-   - Use "full" for complex layouts with touching regions
-
 ## Troubleshooting
 
 ### CUDA Out of Memory
 
-Reduce batch size or use a smaller model:
+Reduce batch size or use a smaller models:
 
 ```bash
 # Use smaller model
@@ -199,7 +162,7 @@ Reduce batch size or use a smaller model:
 Enable debug visualization to see all detections:
 
 ```bash
--p '{"debug_img": "visualize"}'
+-p '{"debug_img": true}'
 ```
 
 ## Remark
