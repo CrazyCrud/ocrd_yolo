@@ -69,8 +69,8 @@ ocrd-yolo-segment \
   - "only-nms": Only non-maximum suppression
   - "only-morph": Only morphological operations
   - "none": No post-processing
-- `debug_img` (string, default: "none"): Debug visualization
-- `use_boxes_as_masks` (boolean, default: true): Use boxes instead of masks
+- `debug_img` (boolean, default: false): Debug visualization
+- `model_type` (string, default: "box"): Could be "box", "segmentation", and "obb"
 - `device` (string, default: "cuda"): Computing device
 
 ## Training Custom Models
