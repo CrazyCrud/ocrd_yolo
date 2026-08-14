@@ -6,13 +6,13 @@ ARG BUILD_DATE
 LABEL \
     maintainer="https://ocr-d.de/en/contact" \
     org.label-schema.vcs-ref=$VCS_REF \
-    org.label-schema.vcs-url="https://github.com/CrazyCrud/ocrd_yolo" \
+    org.label-schema.vcs-url="" \
     org.label-schema.build-date=$BUILD_DATE \
     org.opencontainers.image.vendor="DFG-Funded Initiative for Optical Character Recognition Development" \
     org.opencontainers.image.title="ocrd_yolo" \
     org.opencontainers.image.description="OCR-D wrapper for YOLOv11 based segmentation models" \
-    org.opencontainers.image.source="https://github.com/CrazyCrud/ocrd_yolo" \
-    org.opencontainers.image.documentation="https://github.com/CrazyCrud/ocrd_yolo/blob/${VCS_REF}/README.md" \
+    org.opencontainers.image.source="" \
+    org.opencontainers.image.documentation="" \
     org.opencontainers.image.revision=$VCS_REF \
     org.opencontainers.image.created=$BUILD_DATE \
     org.opencontainers.image.base.name=$DOCKER_BASE_IMAGE
