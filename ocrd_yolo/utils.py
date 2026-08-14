@@ -1,4 +1,5 @@
 # @ai-generated model="gpt-4.5,gpt-5.0,gpt-5.1,gpt-5.2,claude opus 4.5"
+# based on https://github.com/bertsky/ocrd_detectron2/blob/master/ocrd_detectron2
 
 
 import numpy as np
