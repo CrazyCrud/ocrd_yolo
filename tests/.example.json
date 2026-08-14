@@ -9,6 +9,6 @@
     ],
     "min_confidence": 0.5,
     "device": "cpu",
-    "debug_img": "none",
+    "debug_img": false,
     "postprocessing": "none"
 }
