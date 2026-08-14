@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+
+# @ai-generated model="gpt-4.5,gpt-5.0,gpt-5.1,gpt-5.2,claude opus 4.5"
+
 """
 minimal_test.py - Minimal test for YOLO OCR-D processor
 Tests basic functionality without needing a real document dataset model
