@@ -1,4 +1,4 @@
-# @ai-generated model="gpt-4.5,claude opus 4.5,qwen 3.5 397B A17B,"
+# partially @ai-generated model="gpt-4.5,claude opus 4.5,qwen 3.5 397B A17B,"
 
 
 from __future__ import absolute_import
