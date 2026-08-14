@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ocrd-yolo"
 version = "0.1.0"
 description = "OCR-D processor for YOLO region segmentation (layout analysis)"
-authors = [{ name = "Constantin Lehenmeier", email = "info@constantinlehenmeier.de" }]
+authors = [{ name = "", email = "" }]
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.8"
@@ -62,10 +62,10 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/CrazyCrud/ocrd_yolo"
-Repository = "https://github.com/CrazyCrud/ocrd_yolo"
-Issues = "https://github.com/CrazyCrud/ocrd_yolo/issues"
-Documentation = "https://github.com/CrazyCrud/ocrd_yolo#readme"
+Homepage = ""
+Repository = ""
+Issues = ""
+Documentation = ""
 
 [project.scripts]
 ocrd-yolo-segment = "ocrd_yolo.__main__:ocrd_yolo_segment"
